@@ -12,7 +12,7 @@ export function queue(room) {
   }
   return sorted;
 }
-export function advance(room) {
+export function advance(room, startedAt = Date.now()) {
   if (room.current) {
     room.history.push(room.current);
     room.history = room.history.slice(-30);
@@ -24,7 +24,23 @@ export function advance(room) {
     for (const votes of Object.values(room.votes)) delete votes[room.current.id];
   }
   room.skipVotes = {};
-  room.playback = { status: room.current ? 'playing' : 'idle', revision: room.playback.revision + 1 };
+  room.unavailable = {};
+  room.playback = { status: room.current ? 'playing' : 'idle', revision: room.playback.revision + 1, startedAt: room.current ? startedAt : null };
+}
+
+export function playbackDue(room, now = Date.now()) {
+  return Boolean(room.current?.duration > 0 && Number.isFinite(room.playback.startedAt) && now >= room.playback.startedAt + room.current.duration * 1000);
+}
+
+// Advance by the room clock, even if no browser sent an ended event.
+export function settlePlayback(room, now = Date.now()) {
+  let changed = false;
+  while (playbackDue(room, now)) {
+    const nextStart = room.playback.startedAt + room.current.duration * 1000;
+    advance(room, nextStart);
+    changed = true;
+  }
+  return changed;
 }
 
 export function refreshPresence(room, now = Date.now()) {
@@ -33,9 +49,7 @@ export function refreshPresence(room, now = Date.now()) {
   room.members = active;
   for (const id of Object.keys(room.votes)) if (!activeIds.has(id)) delete room.votes[id];
   for (const id of Object.keys(room.skipVotes)) if (!activeIds.has(id)) delete room.skipVotes[id];
-  if (!activeIds.has(room.playerId)) {
-    room.playerId = active[0]?.id || null;
-    room.playback.revision++;
-  }
-  if (room.current && active.length && Object.keys(room.skipVotes).length >= Math.floor(active.length / 2) + 1) advance(room);
+  room.unavailable ||= {};
+  for (const id of Object.keys(room.unavailable)) if (!activeIds.has(id)) delete room.unavailable[id];
+  if (room.current && active.length && Math.max(Object.keys(room.skipVotes).length, Object.keys(room.unavailable).length) >= Math.floor(active.length / 2) + 1) advance(room);
 }

@@ -4,7 +4,8 @@ import http from 'node:http';
 import { mkdtempSync, rmSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { queue, refreshPresence } from '../room.js';
+import { queue, refreshPresence, advance, settlePlayback } from '../room.js';
+import { positionAt, playablePosition } from '../public/session.js';
 import { createHandler, videoId } from '../lib/handler.js';
 import { createRoomStore, createRedisBackend, COMPARE_AND_SET } from '../lib/storage.js';
 
@@ -39,7 +40,7 @@ function emulator() {
       const [, , , roomKey, before, after, ttl] = args;
       if (get(roomKey) === null) result = -1;
       else if (get(roomKey) !== before) { conflicts++; result = 0; }
-      else { if (after === '') records.delete(roomKey); else records.set(roomKey, { value: after, until: clock + ttl * 1000 }); result = 1; }
+      else { if (after === '') records.delete(roomKey); else records.set(roomKey, { value: after, until: ttl === 'KEEP' ? records.get(roomKey).until : clock + ttl * 1000 }); result = 1; }
     } else assert.fail('Unexpected Redis command');
     await new Promise(resolve => setTimeout(resolve, 1));
     return { ok: true, json: async () => ({ result }) };
@@ -62,7 +63,7 @@ test('로컬: 6자리 코드·즉시 재생·한 표·과반 전환·퇴장 삭�
   t.after(() => rmSync(dir, { recursive: true, force: true }));
   const host = client(base), a = client(base), b = client(base), stranger = client(base);
   const created = await host.call('/api/rooms', { title: '오후의 작업실', name: '재생 기기' });
-  assert.equal(created.status, 201); assert.match(created.data.id, /^\d{6}$/); assert.equal(created.data.isPlayer, true);
+  assert.equal(created.status, 201); assert.match(created.data.id, /^\d{6}$/); assert.equal(created.data.isPlayer, undefined);
   assert.equal(created.data.hostKey, undefined);
   const path = '/api/rooms/' + created.data.id;
   const joined = await a.call(path + '/join', { name: 'A' });
@@ -82,7 +83,7 @@ test('로컬: 6자리 코드·즉시 재생·한 표·과반 전환·퇴장 삭�
   assert.equal(state.queue[0].likes, 0); assert.equal(state.queue[0].passes, 1);
   await a.call(path + '/votes', { songId, value: 0 });
   assert.equal((await host.call(path + '/control', { command: 'play' })).status, 400);
-  assert.equal((await a.call(path + '/control', { command: 'ended', songId: first.data.current.id })).status, 403);
+  assert.equal((await a.call(path + '/control', { command: 'ended', songId: first.data.current.id })).status, 409);
   assert.equal((await a.call(path + '/search?q=test')).status, 503);
   for (let i = 0; i < 4; i++) await a.call(path + '/skip', { songId: first.data.current.id, value: true });
   assert.equal((await a.call(path)).data.current.skipCount, 1);
@@ -90,14 +91,16 @@ test('로컬: 6자리 코드·즉시 재생·한 표·과반 전환·퇴장 삭�
   assert.equal(state.current.id, songId); assert.equal(state.current.skipCount, 0);
   assert.equal((await host.call(path + '/control', { command: 'ended', songId: first.data.current.id })).status, 409);
   const publicState = (await stranger.call(path)).data;
-  assert.equal(publicState.isPlayer, false); assert.equal(publicState.me, null);
+  assert.equal(publicState.isPlayer, undefined); assert.equal(publicState.me, null);
   assert.equal(publicState.votes, undefined); assert.ok(!JSON.stringify(publicState).includes('device'));
   assert.equal((await host.call(path + '/heartbeat', {}, { Origin: 'https://evil.test' })).status, 403);
   const saved = JSON.parse(readFileSync(join(dir, 'serverless-local.json'), 'utf8'));
   assert.equal(JSON.parse(saved['room:' + created.data.id].value).room.members.length, 3);
-  assert.equal((await host.call(path + '/leave', {})).data.isPlayer, false);
-  assert.equal((await a.call(path)).data.isPlayer, true); // Automatic speaker handover.
-  state = (await a.call(path + '/control', { command: 'ended', songId })).data;
+  const startedAt = state.playback.startedAt;
+  await host.call(path + '/leave', {});
+  assert.equal((await a.call(path)).data.playback.startedAt, startedAt);
+  await a.call(path + '/skip', { songId, value: true });
+  state = (await b.call(path + '/skip', { songId, value: true })).data;
   assert.equal(state.current, null);
   state = (await b.call(path + '/songs', { videoId: '12345678901', title: '다시 자동 재생' })).data;
   assert.equal(state.current.title, '다시 자동 재생');
@@ -135,7 +138,8 @@ test('분산 함수: 동시 투표·신청·종료의 중복 방지와 공유 �
   assert.equal((await host.call(path)).data.queue[0].likes, 3);
   const duplicates = await Promise.all([a.call(path + '/songs', { videoId: '12345678901', title: '중복 신청' }), b.call(path + '/songs', { videoId: '12345678901', title: '중복 신청' })]);
   assert.deepEqual(duplicates.map(v => v.status).sort(), [200, 400]);
-  const ends = await Promise.all([host.call(path + '/control', { command: 'ended', songId: first.data.current.id }), host.call(path + '/control', { command: 'ended', songId: first.data.current.id })]);
+  await stores[0].updateRoom(created.data.id, room => { room.current.duration = 10; room.playback.startedAt = Date.now() - 11000; });
+  const ends = await Promise.all([host.call(path + '/control', { command: 'ended', songId: first.data.current.id }), a.call(path + '/control', { command: 'ended', songId: first.data.current.id })]);
   assert.deepEqual(ends.map(v => v.status).sort(), [200, 409]);
   let state = (await host.call(path)).data;
   assert.equal(state.history.length, 1); assert.equal(state.queue.length, 1);
@@ -158,23 +162,73 @@ test('분산 함수: 동시 투표·신청·종료의 중복 방지와 공유 �
   assert.equal((await host.call(path)).status, 404);
 });
 
-test('접속 확인은 방 수명을 갱신하고 끊긴 재생 기기를 자동 교체한다', async t => {
+test('누가 퇴장해도 재생 시각을 유지하고 접속 확인으로 방 수명만 갱신한다', async t => {
   const redis = emulator(), store = createRoomStore(redis.backend());
   const base = await listen(t, http.createServer(createHandler(async () => store)));
   const host = client(base), guest = client(base);
   const created = await host.call('/api/rooms', { title: '접속 확인', name: '먼저 온 사람' });
   const path = '/api/rooms/' + created.data.id;
   await guest.call(path + '/join', { name: '남은 사람' });
+  await host.call(path + '/songs', { videoId: 'abcdefghijk', title: '계속 흐르는 곡' });
   const before = await store.getRoom(created.data.id);
   await store.updateRoom(created.data.id, room => { room.members[0].lastSeen = Date.now() - 90001; });
   const renewed = await guest.call(path + '/heartbeat', {});
-  assert.equal(renewed.data.members.length, 1); assert.equal(renewed.data.isPlayer, true);
-  assert.notEqual((await store.getRoom(created.data.id)).playerId, before.playerId);
+  assert.equal(renewed.data.members.length, 1);
+  assert.equal(renewed.data.playback.startedAt, before.playback.startedAt);
+  assert.equal(renewed.data.current.id, before.current.id);
   redis.tick(80000); assert.equal((await guest.call(path + '/heartbeat', {})).status, 200);
   redis.tick(80000); assert.equal((await guest.call(path)).status, 200);
   const left = await guest.call(path + '/leave', {}); assert.equal(left.data.deleted, true);
   assert.equal((await guest.call(path)).status, 404);
   assert.ok(!redis.records.has('test:production:room:' + created.data.id));
+});
+
+test('중간 입장은 서버의 현재 위치를 받고 시간 경과만으로 다음 곡을 이어 간다', async t => {
+  const redis = emulator(), store = createRoomStore(redis.backend());
+  const base = await listen(t, http.createServer(createHandler(async () => store)));
+  const a = client(base), b = client(base), viewer = client(base);
+  const created = await a.call('/api/rooms', { title: '공유 타임라인', name: '먼저' });
+  const path = '/api/rooms/' + created.data.id;
+  const added = await a.call(path + '/songs', { videoId: 'abcdefghijk', title: '이미 흐르는 곡' });
+  const firstId = added.data.current.id;
+  assert.equal((await a.call(path + '/control', { command: 'duration', songId: firstId, duration: 0 })).status, 400);
+  await a.call(path + '/control', { command: 'duration', songId: firstId, duration: 180 });
+  await store.updateRoom(created.data.id, room => { room.playback.startedAt = Date.now() - 80000; });
+  const late = await b.call(path + '/join', { name: '나중' });
+  assert.equal(late.data.current.id, firstId);
+  assert.ok(positionAt(late.data.playback, late.data.serverTime) >= 80);
+  assert.ok(positionAt(late.data.playback, late.data.serverTime) < 82);
+  assert.equal((await b.call(path + '/control', { command: 'ended', songId: firstId })).status, 409);
+  // One browser's video error cannot skip a song for the other participant.
+  const failed = await b.call(path + '/control', { command: 'unavailable', songId: firstId });
+  assert.equal(failed.data.current.id, firstId);
+  const queued = await a.call(path + '/songs', { videoId: 'lmnopqrstuv', title: '다음 곡' });
+  const nextId = queued.data.queue[0].id;
+  const start = Date.now() - 185000;
+  await store.updateRoom(created.data.id, room => { room.playback.startedAt = start; room.songs[0].duration = 60; });
+  const ttlBefore = redis.records.get('test:production:room:' + created.data.id).until;
+  // No ended event: a read computes the next track from the shared clock.
+  const elapsed = await viewer.call(path);
+  assert.equal(elapsed.data.current.id, nextId);
+  assert.equal(elapsed.data.playback.startedAt, start + 180000);
+  assert.ok(positionAt(elapsed.data.playback, elapsed.data.serverTime) >= 5);
+  assert.equal(redis.records.get('test:production:room:' + created.data.id).until, ttlBefore);
+  const fresh = await b.call(path);
+  assert.equal(fresh.data.current.id, nextId); assert.equal(fresh.data.history.length, 1);
+  redis.tick(90001); assert.equal((await viewer.call(path)).status, 404);
+});
+
+test('공유 재생 위치 계산과 지연된 여러 곡 전환을 검증한다', () => {
+  const room = { members: [], votes: {}, songs: [{ id: 'a', addedBy: 'x', duration: 10, createdAt: 0 }, { id: 'b', addedBy: 'x', duration: 20, createdAt: 1 }, { id: 'c', addedBy: 'y', duration: 30, createdAt: 2 }], current: null, history: [], playback: { status: 'idle', revision: 0 }, lastRequester: null };
+  advance(room, 100000);
+  assert.equal(positionAt(room.playback, 108000), 8);
+  assert.equal(playablePosition(room, 120000), 9.9);
+  assert.equal(positionAt({ status: 'idle', startedAt: null }, 120000), 0);
+  assert.equal(settlePlayback(room, 145000), true);
+  // Fairness picks c after a, then b; starts follow track ends rather than request time.
+  assert.equal(room.current.id, 'b'); assert.equal(room.playback.startedAt, 140000);
+  assert.equal(positionAt(room.playback, 145000), 5);
+  settlePlayback(room, 170000); assert.equal(room.current, null); assert.equal(room.playback.startedAt, null);
 });
 
 test('Vercel 재작성·파싱된 body·보안 쿠키·필수 DB 설정을 처리한다', async () => {

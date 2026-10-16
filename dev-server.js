@@ -9,7 +9,7 @@ export function createDevServer(apiHandler = handler) {
     const path = new URL(req.url, 'http://localhost').pathname;
     if (path.startsWith('/api/')) return apiHandler(req, res);
     securityHeaders(res);
-    const assets = { '/': ['index.html', 'text/html'], '/app.js': ['app.js', 'text/javascript'], '/style.css': ['style.css', 'text/css'] };
+    const assets = { '/': ['index.html', 'text/html'], '/app.js': ['app.js', 'text/javascript'], '/session.js': ['session.js', 'text/javascript'], '/style.css': ['style.css', 'text/css'] };
     const asset = assets[path];
     if (req.method !== 'GET' || !asset) { res.writeHead(404); return res.end('Not found'); }
     res.writeHead(200, { 'Content-Type': `${asset[1]}; charset=utf-8`, 'Cache-Control': 'no-cache' });
