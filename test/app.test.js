@@ -48,10 +48,10 @@ function emulator() {
   return { commands, records, tick(ms) { clock += ms; }, get conflicts() { return conflicts; }, backend() { return createRedisBackend({ url: 'https://redis.example.test', token: 'test-private-token', prefix: 'test:production', fetchImpl }); } };
 }
 
-test('점수·등록순과 신청자 연속 재생 방지를 반영한다', () => {
+test('신청자가 같아도 점수를 우선하고 동점은 등록순으로 정렬한다', () => {
   const room = { members: [{ id: 'one' }, { id: 'two' }], votes: { one: { a: 1, b: 1 }, two: { c: -1 } }, songs: [{ id: 'a', addedBy: 'one', createdAt: 1 }, { id: 'b', addedBy: 'one', createdAt: 2 }, { id: 'c', addedBy: 'two', createdAt: 3 }], lastRequester: null };
   assert.deepEqual(queue(room).map(s => s.id), ['a', 'b', 'c']);
-  room.lastRequester = 'one'; assert.deepEqual(queue(room).map(s => s.id), ['c', 'a', 'b']);
+  room.lastRequester = 'one'; assert.deepEqual(queue(room).map(s => s.id), ['a', 'b', 'c']);
 });
 
 test('로컬: 6자리 코드·즉시 재생·한 표·과반 전환·퇴장 삭제', async t => {
@@ -225,9 +225,9 @@ test('공유 재생 위치 계산과 지연된 여러 곡 전환을 검증한다
   assert.equal(playablePosition(room, 120000), 9.9);
   assert.equal(positionAt({ status: 'idle', startedAt: null }, 120000), 0);
   assert.equal(settlePlayback(room, 145000), true);
-  // Fairness picks c after a, then b; starts follow track ends rather than request time.
-  assert.equal(room.current.id, 'b'); assert.equal(room.playback.startedAt, 140000);
-  assert.equal(positionAt(room.playback, 145000), 5);
+  // Equal scores keep registration order; starts follow track ends rather than request time.
+  assert.equal(room.current.id, 'c'); assert.equal(room.playback.startedAt, 130000);
+  assert.equal(positionAt(room.playback, 145000), 15);
   settlePlayback(room, 170000); assert.equal(room.current, null); assert.equal(room.playback.startedAt, null);
 });
 
@@ -269,4 +269,41 @@ test('배포 경로·정적 파일·보안 정책을 구성한다', () => {
   assert.equal(config.outputDirectory, 'dist'); assert.equal(config.rewrites[0].destination, '/api/index?__route=:route*');
   assert.equal(config.functions['api/index.js'].maxDuration, 30);
   for (const name of ['index.html', 'app.js', 'style.css']) assert.ok(readFileSync(new URL(`../public/${name}`, import.meta.url)).length > 0);
+});
+
+test('찬성 2표 곡이 찬성 1·패스 1표 곡보다 먼저 표시되고 실제 다음 곡이 된다', async t => {
+  const redis = emulator(), store = createRoomStore(redis.backend());
+  const base = await listen(t, http.createServer(createHandler(async () => store)));
+  const first = client(base), second = client(base);
+  for (const transition of ['skip', 'ended']) {
+    const created = await first.call('/api/rooms', { title: `점수 우선 ${transition}`, name: '먼저' });
+    const path = '/api/rooms/' + created.data.id;
+    await second.call(path + '/join', { name: '함께' });
+    const playing = await first.call(path + '/songs', { videoId: 'abcdefghijk', title: '현재 곡' });
+    const low = await second.call(path + '/songs', { videoId: 'lmnopqrstuv', title: '찬성 1 패스 1' });
+    const lowId = low.data.queue[0].id;
+    // The later, higher-scoring song has the same requester as the current song.
+    const high = await first.call(path + '/songs', { videoId: '12345678901', title: '찬성 2' });
+    const highId = high.data.queue.find(song => song.videoId === '12345678901').id;
+    await first.call(path + '/votes', { songId: lowId, value: 1 });
+    await second.call(path + '/votes', { songId: lowId, value: -1 });
+    await first.call(path + '/votes', { songId: highId, value: 1 });
+    let state = (await second.call(path + '/votes', { songId: highId, value: 1 })).data;
+    assert.deepEqual(state.queue.map(song => [song.id, song.score]), [[highId, 2], [lowId, 0]]);
+    await first.call(path + '/votes', { songId: highId, value: -1 });
+    state = (await first.call(path)).data;
+    assert.deepEqual(state.queue.map(song => [song.id, song.score]), [[lowId, 0], [highId, 0]]);
+    await first.call(path + '/votes', { songId: highId, value: 1 });
+    const displayedNext = (await second.call(path)).data.queue[0].id;
+    if (transition === 'skip') {
+      await first.call(path + '/skip', { songId: playing.data.current.id, value: true });
+      state = (await second.call(path + '/skip', { songId: playing.data.current.id, value: true })).data;
+    } else {
+      await store.updateRoom(created.data.id, room => { room.current.duration = 1; room.playback.startedAt = Date.now() - 2000; });
+      state = (await second.call(path + '/control', { command: 'ended', songId: playing.data.current.id })).data;
+    }
+    assert.equal(displayedNext, highId);
+    assert.equal(state.current.id, displayedNext);
+    assert.equal(state.queue[0].id, lowId);
+  }
 });

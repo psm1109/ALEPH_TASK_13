@@ -5,18 +5,12 @@ export function voteCounts(room, songId) {
   return { likes, passes, score: likes - passes };
 }
 export function queue(room) {
-  const sorted = [...room.songs].sort((a, b) => voteCounts(room, b.id).score - voteCounts(room, a.id).score || a.createdAt - b.createdAt || a.id.localeCompare(b.id));
-  if (sorted[0]?.addedBy === room.lastRequester) {
-    const alternate = sorted.findIndex(s => s.addedBy !== room.lastRequester);
-    if (alternate > 0) sorted.unshift(...sorted.splice(alternate, 1));
-  }
-  return sorted;
+  return [...room.songs].sort((a, b) => voteCounts(room, b.id).score - voteCounts(room, a.id).score || a.createdAt - b.createdAt || a.id.localeCompare(b.id));
 }
 export function advance(room, startedAt = Date.now()) {
   if (room.current) {
     room.history.push(room.current);
     room.history = room.history.slice(-30);
-    room.lastRequester = room.current.addedBy;
   }
   room.current = queue(room)[0] || null;
   if (room.current) {
