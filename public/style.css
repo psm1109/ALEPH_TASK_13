@@ -13,8 +13,9 @@ body{isolation:isolate}
 .landing-backdrop{position:fixed;inset:0;z-index:-1;overflow:hidden;pointer-events:none;background:var(--bg)}
 .landing-backdrop::after{content:"";position:absolute;inset:0;background:linear-gradient(90deg,#11121966,#11121955 55%,#11121977),linear-gradient(0deg,#111219cc,transparent 65%)}
 .landing-copy{position:relative;isolation:isolate;aspect-ratio:1;min-width:0;min-height:430px;display:flex;flex-direction:column;justify-content:center;text-align:center}
-.landing-copy>.eyebrow,.landing-copy .feature-row,.landing-copy .landing-note{justify-content:center}
-.landing-copy>.eyebrow,.landing-copy>h1{transform:translateY(-12px)}
+.landing-identity{display:contents}
+.landing-identity>.eyebrow,.landing-copy .feature-row,.landing-copy .landing-note{justify-content:center}
+.landing-identity>.eyebrow,.landing-identity>h1{transform:translateY(-12px)}
 .app-purpose{max-width:54ch;margin:16px auto 0;padding:0 12px;font-size:14px;line-height:1.95;color:var(--muted);word-break:keep-all;overflow-wrap:anywhere;text-wrap:pretty}
 .ambient-turntable{position:absolute;width:calc(100vw + 476px);aspect-ratio:1;left:calc(50% - 270px);top:465px;transform:translate(-50%,-50%);filter:blur(.7px);opacity:.72;pointer-events:none}
 .ambient-vinyl{position:relative;width:100%;height:100%;border:14px solid #082414;border-radius:50%;box-shadow:0 0 0 2px #48c97b66,0 0 0 5px #07180d,inset 0 0 0 2px #a1ef9844,0 12px 35px #0008;background:repeating-radial-gradient(circle at center,transparent 0 5px,#b4efbd2e 6px,transparent 7px 10px),radial-gradient(ellipse 24% 26% at 23% 44%,#e20b9ce6 0%,#c2179899 30%,#c2179800 86%),radial-gradient(ellipse 22% 22% at 25% 60%,#6920d9e0 0%,#6920d98c 30%,#6920d900 85%),radial-gradient(ellipse 25% 21% at 30% 72%,#04b9b6d9 0%,#04b9b680 30%,#04b9b600 86%),radial-gradient(ellipse 20% 24% at 51% 74%,#eb6414e6 0%,#df3d4099 30%,#df3d4000 85%),radial-gradient(ellipse 19% 23% at 42% 78%,#d00c879e 0%,#d00c8740 38%,#d00c8700 79%),radial-gradient(ellipse 23% 22% at 70% 50%,#4168cdb3 0%,#4168cd47 38%,#4168cd00 80%),radial-gradient(ellipse 23% 20% at 66% 27%,#d3ad32c4 0%,#d3ad3238 36%,#d3ad3200 78%),radial-gradient(ellipse 24% 20% at 40% 23%,#19bda88c 0%,#19bda833 37%,#19bda800 80%),conic-gradient(from 25deg,#06421e,#128f39 55deg,#075338 130deg,#0b6748 215deg,#07542c 285deg,#128134 335deg,#06421e);animation:ambient-vinyl-spin 72s linear infinite}
@@ -106,3 +107,44 @@ body:has(.is-scene-pinned) .site-header{position:sticky;top:0;z-index:3}
 @media(max-width:700px){[data-theme=light] .ambient-label{width:500px}}
 @media(prefers-reduced-motion:reduce){.guide-scroll-space{display:none}.landing-guide{position:static;max-height:none;overflow:visible;transform:none;transition:none;pointer-events:auto;margin:0 -32px}.landing-guide .steps{padding-top:26px}.landing-guide footer{margin-top:0}}
 @media(max-width:700px) and (prefers-reduced-motion:reduce){.landing-guide{margin:0 -20px}}
+
+/* Mobile keeps a readable, naturally scrolling page instead of the desktop scene. */
+@media(max-width:700px){
+  body{-webkit-text-size-adjust:100%;text-size-adjust:100%}
+  main{padding:0 16px}
+  .site-header{height:68px;padding:0 16px}
+  .brand{font-size:24px;gap:8px}
+  .brand-icon{width:32px;height:32px;font-size:26px}
+  .header-actions{gap:8px}
+  .theme-toggle{min-height:44px;font-size:11px;padding:8px 10px}
+  .site-header .quiet{font-size:11px;min-height:44px}
+  .landing{grid-template-columns:minmax(0,1fr);padding:18px 0 28px;gap:24px}
+  .landing-copy{min-height:0;aspect-ratio:auto;padding:16px 0 0;text-align:left;text-shadow:none}
+  .landing-identity{display:flex;flex-direction:column;align-items:flex-start;aspect-ratio:auto;width:100%;margin:0}
+  .landing-identity>.eyebrow{font-size:9px;letter-spacing:.7px;max-width:100%;text-align:left}
+  .landing-identity>.eyebrow,.landing-identity>h1{transform:none}
+  .landing h1{font-size:clamp(26px,7.6vw,32px);line-height:1.45;margin:14px 0 0;letter-spacing:-1px;width:100%}
+  .landing-copy .app-purpose{max-width:none;margin:16px 0 0;padding:0;font-size:15px;line-height:1.85}
+  .feature-row{font-size:12px;gap:8px 16px;margin-top:20px}
+  .landing-copy .feature-row{justify-content:flex-start}
+  .landing-backdrop{display:none}
+  .create-card,[data-theme=light] .create-card{padding:22px;border-radius:12px;background:var(--panel);border-color:var(--line);box-shadow:none}
+  .mini-record{display:none}
+  .create-card h2{font-size:25px}
+  .create-card>.muted{font-size:14px}
+  .create-card form{margin-top:22px}
+  label{font-size:14px}
+  input{font-size:16px;min-height:50px;padding:12px}
+  .create-card form .primary{margin-top:22px;min-height:50px;font-size:15px}
+  .create-card>.small{font-size:11px;line-height:1.8}
+  .code-form{gap:8px}
+  .code-form button{min-height:50px;padding:12px 10px;font-size:13px}
+  .guide-scroll-space{display:none}
+  .landing-guide,[data-theme=light] .landing-guide{position:static;max-height:none;overflow:visible;transform:none;transition:none;pointer-events:auto;margin:0 -16px;padding-bottom:env(safe-area-inset-bottom);background:var(--bg);box-shadow:none;backdrop-filter:none}
+  .landing-guide .steps{padding:24px 20px;gap:24px}
+  .landing-guide .steps article>span{font-size:10px;letter-spacing:1px}
+  .landing-guide .steps h3{font-size:17px}
+  .landing-guide .steps p{font-size:14px;line-height:1.8}
+  .landing-guide footer{padding:12px 20px;font-size:11px}
+  .landing-guide footer .quiet{font-size:11px}
+}
