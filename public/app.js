@@ -21,7 +21,8 @@ colorPreference.addEventListener('change', event => {
   if (!['dark', 'light'].includes(savedTheme)) applyTheme(event.matches ? 'dark' : 'light');
 });
 const esc = value => String(value ?? '').replace(/[&<>"']/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[char]));
-let roomId = new URLSearchParams(location.search).get('room');
+const initialRoomId = new URLSearchParams(location.search).get('room');
+let roomId = null;
 let room = null, pollBusy = false, lastSnapshot = '', searchItems = [], player = null, playerReady = false, loadedSong = null, appliedRevision = -1, youtubePromise;
 let lastHeartbeat = 0, lastRefresh = 0, serverClockOffset = 0;
 let localPaused = false, localBlocked = false, needsAlignment = false, durationSentFor = null, durationBusy = false;
@@ -80,8 +81,8 @@ function mountLandingGuide() {
   };
 }
 function notify(message) { $('#notice').textContent = message; $('#notice').classList.add('show'); clearTimeout(notify.timer); notify.timer = setTimeout(() => $('#notice').classList.remove('show'), 4500); }
-async function request(action = '', data, global = false) {
-  const path = global ? '/api/rooms' : `/api/rooms/${roomId}${action ? '/' + action : ''}`;
+async function request(action = '', data, global = false, targetRoomId = roomId) {
+  const path = global ? '/api/rooms' : `/api/rooms/${encodeURIComponent(targetRoomId)}${action ? '/' + action : ''}`;
   const sentAt = performance.now();
   const response = await fetch(path, { method: data === undefined ? 'GET' : 'POST', signal: AbortSignal.timeout(35000), headers: { 'Content-Type': 'application/json' }, ...(data === undefined ? {} : { body: JSON.stringify(data) }) });
   const result = await response.json();
@@ -94,6 +95,24 @@ function stopPlayer() { if (player) player.destroy(); player = null; playerReady
 function exitRoom() {
   stopPlayer(); room = null; roomId = null; lastSnapshot = ''; lastHeartbeat = 0;
   history.replaceState(null, '', '/'); document.title = '사이 — 우리 사이, 다음 한 곡'; landing();
+}
+async function enterRoom(code) {
+  if (enterRoom.busy) return;
+  enterRoom.busy = true;
+  const buttons = [$('#code-form button'), $('#create-form button')].filter(Boolean);
+  buttons.forEach(button => { button.disabled = true; });
+  try {
+    const result = await request('', undefined, false, code);
+    roomId = result.id;
+    history.replaceState(null, '', `?room=${roomId}`);
+    shell(); accept(result);
+  } catch (error) {
+    if (initialRoomId && !roomId) history.replaceState(null, '', '/');
+    notify(error.status === 404 ? '방이 없거나 비어 있어 삭제됐어요. 코드를 다시 확인해 주세요.' : error.message);
+  } finally {
+    enterRoom.busy = false;
+    buttons.forEach(button => { button.disabled = false; });
+  }
 }
 function landing() {
   disposeLandingGuide();
@@ -110,7 +129,7 @@ function landing() {
     } catch (error) { notify(error.message); } finally { button.disabled = false; }
   });
   $('.create-card').insertAdjacentHTML('beforeend', `<div class="join-divider">초대받으셨나요?</div><form id="code-form" class="code-form"><label>방 코드<input name="code" inputmode="numeric" pattern="[0-9]{6}" minlength="6" maxlength="6" placeholder="6자리 숫자" autocomplete="off" required></label><button class="outline">코드로 입장 ↗</button></form>`);
-  $('#code-form').onsubmit = event => { event.preventDefault(); const code = new FormData(event.target).get('code').trim(); if (/^\d{6}$/.test(code)) location.assign(`/?room=${code}`); };
+  $('#code-form').onsubmit = event => { event.preventDefault(); const code = new FormData(event.target).get('code').trim(); if (/^\d{6}$/.test(code)) enterRoom(code); };
   mountLandingGuide();
 }
 function shell() {
@@ -286,6 +305,7 @@ async function heartbeat() {
   catch (error) { if (error.status === 404) { exitRoom(); notify('참여자가 없어 방이 자동 삭제됐어요.'); } else if (error.status === 401) { await refresh(); } else if ($('#connection')) $('#connection').textContent = error.message; }
   finally { heartbeat.busy = false; }
 }
-if (roomId) { shell(); refresh(); } else landing();
+landing();
+if (initialRoomId) enterRoom(initialRoomId);
 setInterval(() => { if (Date.now() - lastRefresh >= 5000) refresh(); heartbeat(); reportDuration(); renderLocalPlayback(); }, 1000);
 document.addEventListener('visibilitychange', () => { if (!document.hidden) { needsAlignment = true; refresh(); } });
