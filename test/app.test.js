@@ -121,7 +121,7 @@ test('로컬: 6자리 코드·즉시 재생·한 표·과반 전환·퇴장 삭�
   assert.equal(state.queue[0].likes, 0); assert.equal(state.queue[0].passes, 1);
   await a.call(path + '/votes', { songId, value: 0 });
   assert.equal((await host.call(path + '/control', { command: 'play' })).status, 400);
-  assert.equal((await a.call(path + '/control', { command: 'ended', songId: first.data.current.id })).status, 409);
+  assert.equal((await a.call(path + '/control', { command: 'ended', songId: first.data.current.id })).status, 403);
   assert.equal((await a.call(path + '/search?q=test')).status, 503);
   for (let i = 0; i < 4; i++) await a.call(path + '/skip', { songId: first.data.current.id, value: true });
   assert.equal((await a.call(path)).data.current.skipCount, 1);
@@ -177,7 +177,7 @@ test('분산 함수: 동시 투표·신청·종료의 중복 방지와 공유 �
   const duplicates = await Promise.all([a.call(path + '/songs', { videoId: '12345678901', title: '중복 신청' }), b.call(path + '/songs', { videoId: '12345678901', title: '중복 신청' })]);
   assert.deepEqual(duplicates.map(v => v.status).sort(), [200, 400]);
   await stores[0].updateRoom(created.data.id, room => { room.current.duration = 10; room.playback.startedAt = Date.now() - 11000; });
-  const ends = await Promise.all([host.call(path + '/control', { command: 'ended', songId: first.data.current.id }), a.call(path + '/control', { command: 'ended', songId: first.data.current.id })]);
+  const ends = await Promise.all([host.call(path + '/control', { command: 'ended', songId: first.data.current.id }), host.call(path + '/control', { command: 'ended', songId: first.data.current.id })]);
   assert.deepEqual(ends.map(v => v.status).sort(), [200, 409]);
   let state = (await host.call(path)).data;
   assert.equal(state.history.length, 1); assert.equal(state.queue.length, 1);
@@ -236,10 +236,10 @@ test('중간 입장은 서버의 현재 위치를 받고 시간 경과만으로 
   assert.equal(late.data.current.id, firstId);
   assert.ok(positionAt(late.data.playback, late.data.serverTime) >= 80);
   assert.ok(positionAt(late.data.playback, late.data.serverTime) < 82);
-  assert.equal((await b.call(path + '/control', { command: 'ended', songId: firstId })).status, 409);
+  assert.equal((await b.call(path + '/control', { command: 'ended', songId: firstId })).status, 403);
   // One browser's video error cannot skip a song for the other participant.
   const failed = await b.call(path + '/control', { command: 'unavailable', songId: firstId });
-  assert.equal(failed.data.current.id, firstId);
+  assert.equal(failed.status, 403);
   const queued = await a.call(path + '/songs', { videoId: 'lmnopqrstuv', title: '다음 곡' });
   const nextId = queued.data.queue[0].id;
   const start = Date.now() - 185000;
@@ -338,10 +338,32 @@ test('찬성 2표 곡이 찬성 1·패스 1표 곡보다 먼저 표시되고 실
       state = (await second.call(path + '/skip', { songId: playing.data.current.id, value: true })).data;
     } else {
       await store.updateRoom(created.data.id, room => { room.current.duration = 1; room.playback.startedAt = Date.now() - 2000; });
-      state = (await second.call(path + '/control', { command: 'ended', songId: playing.data.current.id })).data;
+      state = (await first.call(path + '/control', { command: 'ended', songId: playing.data.current.id })).data;
     }
     assert.equal(displayedNext, highId);
     assert.equal(state.current.id, displayedNext);
     assert.equal(state.queue[0].id, lowId);
   }
+});
+
+
+test('방 생성자만 재생을 담당하고 퇴장 후에도 권한을 넘기지 않는다', async t => {
+  const redis = emulator(), store = createRoomStore(redis.backend());
+  const base = await listen(t, http.createServer(createHandler(async () => store)));
+  const host = client(base), guest = client(base), viewer = client(base);
+  const created = await host.call('/api/rooms', { title: '생성자 재생', name: '방장' });
+  const path = '/api/rooms/' + created.data.id;
+  assert.equal(created.data.isCreator, true);
+  assert.equal((await viewer.call(path)).data.isCreator, false);
+  assert.equal((await guest.call(path + '/join', { name: '참여자' })).data.isCreator, false);
+  const song = (await guest.call(path + '/songs', { videoId: 'abcdefghijk', title: '신청곡' })).data.current;
+  for (const command of ['duration', 'ended', 'unavailable']) {
+    assert.equal((await guest.call(path + '/control', { command, songId: song.id, duration: 180 })).status, 403);
+  }
+  assert.equal((await host.call(path)).data.isCreator, true);
+  assert.equal((await host.call(path + '/control', { command: 'unavailable', songId: song.id })).data.current, null);
+  await host.call(path + '/leave', {});
+  assert.equal((await guest.call(path)).data.isCreator, false);
+  assert.equal((await host.call(path + '/join', { name: '다시 방장' })).data.isCreator, true);
+  assert.ok(!JSON.stringify((await guest.call(path)).data).includes('creatorDevice'));
 });
