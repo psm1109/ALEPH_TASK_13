@@ -241,3 +241,19 @@ body:has(.room-heading) main{max-width:1480px}
 @media(max-width:700px){.room-grid{grid-template-columns:minmax(0,1fr);grid-template-areas:"player" "request" "queue" "people" "note";gap:18px}.room-grid .player-panel{padding:0 4px}.room-turntable{max-width:420px;width:100%;margin:0 auto 12px}.room-grid .queue-panel{min-height:280px}.room-vinyl-label span{font-size:24px}}
 
 .tonearm{position:absolute;right:-3%;top:-3%;width:43%;height:91%;object-fit:contain;pointer-events:none;user-select:none;z-index:2}
+
+/* The disc rotates beneath a stationary video in its centre. */
+.room-vinyl{animation:room-vinyl-spin 18s linear infinite;animation-play-state:paused}
+.room-turntable.is-playing .room-vinyl{animation-play-state:running}
+@keyframes room-vinyl-spin{to{transform:rotate(360deg)}}
+.room-grid .room-turntable #player-stage{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);width:58%;aspect-ratio:1;border:0;border-radius:50%;overflow:hidden;background:#11121a;box-shadow:0 0 0 7px #111e17,0 0 0 8px #91b69c50;z-index:3}
+.room-turntable #youtube-player{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);width:178%;height:100%;min-height:200px}
+.has-video .room-vinyl-label{visibility:hidden}
+.video-view{display:block;margin:0 auto 12px;color:var(--accent);padding:8px 12px}
+.room-grid .video-expanded .room-turntable{aspect-ratio:auto;display:flex;flex-direction:column;gap:20px}
+.video-expanded .room-vinyl{flex-shrink:0}
+.video-expanded .tonearm{height:auto;aspect-ratio:0.51}
+.room-grid .video-expanded .room-turntable #player-stage{position:relative;left:auto;top:auto;transform:none;width:100%;aspect-ratio:16/9;min-height:200px;border-radius:12px;box-shadow:none;overflow:hidden}
+.video-expanded .room-turntable #youtube-player{inset:0;transform:none;width:100%;height:100%}
+.video-expanded .room-vinyl-label{visibility:visible}
+@media(prefers-reduced-motion:reduce){.room-vinyl{animation:none}}

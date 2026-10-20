@@ -87,7 +87,7 @@ async function request(action = '', data, global = false, targetRoomId = roomId)
   return result;
 }
 async function act(action, data) { const result = await request(action, data); if (result.deleted) exitRoom(); else accept(result); return result; }
-function stopPlayer() { if (player) player.destroy(); player = null; playerReady = false; loadedSong = null; appliedRevision = -1; durationSentFor = null; localPaused = false; localBlocked = false; }
+function stopPlayer() { $('.room-turntable')?.classList.remove('is-playing'); if (player) player.destroy(); player = null; playerReady = false; loadedSong = null; appliedRevision = -1; durationSentFor = null; localPaused = false; localBlocked = false; }
 function exitRoom() {
   stopPlayer(); room = null; roomId = null; lastSnapshot = ''; lastHeartbeat = 0;
   history.replaceState(null, '', '/'); document.title = '사이 — 우리 사이, 다음 한 곡'; landing();
@@ -130,8 +130,13 @@ function landing() {
 }
 function shell() {
   disposeLandingGuide();
-  $('#app').innerHTML = `<section class="room-heading"><div><span class="eyebrow"><span class="dot"></span> OUR LISTENING ROOM</span><h1 id="room-title">모임에 연결 중…</h1><p class="muted">서로의 취향 사이에서, 함께 듣기 좋은 한 곡.</p></div><button id="invite" class="outline">초대 링크 복사 ↗</button></section><div id="connection" class="connection" role="status"></div><div class="room-grid"><section class="left-column"><article class="panel player-panel"><div class="panel-heading"><span class="eyebrow">NOW PLAYING</span><span class="badge" id="player-role"></span></div><div class="room-turntable" aria-hidden="true"><div class="room-vinyl"><div class="room-vinyl-label"><span>SAI</span><small>LISTEN TOGETHER</small></div></div><img class="tonearm" src="/tonearm.svg" alt="" draggable="false"></div><div id="player-stage"><div id="player-placeholder" class="player-placeholder"><div class="record"><div class="record-center">sai</div></div><p>우리의 첫 곡을 기다리는 중</p><span>곡을 신청하고 함께 재생해 보세요.</span></div><div id="youtube-player"></div></div><div id="current-info"></div><p id="player-message" class="small muted" role="status"></p><div id="play-controls"></div></article><article class="panel request-panel"><div class="panel-heading"><h2>다음엔 뭐 들을까요?</h2><span class="muted small">REQUEST A SONG</span></div><div id="request-content"></div></article></section><aside class="right-column"><section class="panel queue-panel"><div class="panel-heading"><h2>함께 고른 다음 곡 <span id="queue-count" class="count">0</span></h2><span class="small muted">투표순</span></div><p class="small muted queue-help">듣고 싶어요 +1 · 이번엔 패스 −1. 점수가 높은 곡부터, 동점은 신청순으로 들어요. 첫 곡은 바로 시작하니 한 곡 더 신청해 투표해 보세요.</p><div id="queue"></div></section><section class="panel people-panel"><div class="panel-heading"><h2>함께 듣는 사람들</h2><span id="people-count" class="small muted"></span></div><div id="people"></div><p class="small muted">접속을 90초 동안 확인하지 못한 참여자는 자동으로 퇴장해요.</p></section><div class="rule-note"><span>↳</span><p>말하기 어려운 취향도, 한 표면 충분해요.<br><b>투표한 사람의 이름은 공개하지 않아요.</b></p></div></aside></div>`;
+  $('#app').innerHTML = `<section class="room-heading"><div><span class="eyebrow"><span class="dot"></span> OUR LISTENING ROOM</span><h1 id="room-title">모임에 연결 중…</h1><p class="muted">서로의 취향 사이에서, 함께 듣기 좋은 한 곡.</p></div><button id="invite" class="outline">초대 링크 복사 ↗</button></section><div id="connection" class="connection" role="status"></div><div class="room-grid"><section class="left-column"><article class="panel player-panel"><div class="panel-heading"><span class="eyebrow">NOW PLAYING</span><span class="badge" id="player-role"></span></div><div class="room-turntable"><div class="room-vinyl" aria-hidden="true"><div class="room-vinyl-label"><span>SAI</span><small>LISTEN TOGETHER</small></div></div><img class="tonearm" src="/tonearm.svg" alt="" draggable="false"><div id="player-stage" hidden><div id="youtube-player"></div></div></div><button id="video-view" class="quiet video-view" type="button" aria-controls="player-stage" aria-expanded="false" hidden>영상 펼쳐 보기 ↗</button><div id="player-placeholder" class="player-placeholder"><div class="record"><div class="record-center">sai</div></div><p>우리의 첫 곡을 기다리는 중</p><span>곡을 신청하고 함께 재생해 보세요.</span></div><div id="current-info"></div><p id="player-message" class="small muted" role="status"></p><div id="play-controls"></div></article><article class="panel request-panel"><div class="panel-heading"><h2>다음엔 뭐 들을까요?</h2><span class="muted small">REQUEST A SONG</span></div><div id="request-content"></div></article></section><aside class="right-column"><section class="panel queue-panel"><div class="panel-heading"><h2>함께 고른 다음 곡 <span id="queue-count" class="count">0</span></h2><span class="small muted">투표순</span></div><p class="small muted queue-help">듣고 싶어요 +1 · 이번엔 패스 −1. 점수가 높은 곡부터, 동점은 신청순으로 들어요. 첫 곡은 바로 시작하니 한 곡 더 신청해 투표해 보세요.</p><div id="queue"></div></section><section class="panel people-panel"><div class="panel-heading"><h2>함께 듣는 사람들</h2><span id="people-count" class="small muted"></span></div><div id="people"></div><p class="small muted">접속을 90초 동안 확인하지 못한 참여자는 자동으로 퇴장해요.</p></section><div class="rule-note"><span>↳</span><p>말하기 어려운 취향도, 한 표면 충분해요.<br><b>투표한 사람의 이름은 공개하지 않아요.</b></p></div></aside></div>`;
   $('#app').insertAdjacentHTML('afterbegin', '<div class="room-backdrop" aria-hidden="true"></div>');
+  $('#video-view').onclick = () => {
+    const expanded = $('.player-panel').classList.toggle('video-expanded');
+    $('#video-view').setAttribute('aria-expanded', String(expanded));
+    $('#video-view').textContent = expanded ? '레코드 안으로 접기 ↙' : '영상 펼쳐 보기 ↗';
+  };
   $('#invite').onclick = async () => {
     const url = new URL(location.href); url.search = `?room=${roomId}`;
     try { await navigator.clipboard.writeText(url.href); notify('초대 링크를 복사했어요. 함께 들을 사람에게 보내 주세요.'); }
@@ -222,6 +227,14 @@ function loadedVideoMatches() {
   try { return new URL(player.getVideoUrl()).searchParams.get('v') === room?.current?.videoId; } catch { return false; }
 }
 function renderLocalPlayback() {
+  const hasVideo = Boolean(room?.isCreator && room.current);
+  if ($('#player-stage')) $('#player-stage').hidden = !hasVideo;
+  if ($('#video-view')) $('#video-view').hidden = !hasVideo;
+  $('.player-panel')?.classList.toggle('has-video', hasVideo);
+  const spinning = Boolean(room?.current && (room.isCreator
+    ? playerReady && loadedSong === room.current.id && !localPaused && !localBlocked && player.getPlayerState() === YT.PlayerState.PLAYING
+    : room.playback.status === 'playing'));
+  $('.room-turntable')?.classList.toggle('is-playing', spinning);
   if ($('#resume-listening')) $('#resume-listening').hidden = !(room?.isCreator && room.current && (localPaused || localBlocked));
   if ($('#session-position')) {
     const seconds = Math.floor(positionAt(room?.playback, serverNow()));
@@ -245,17 +258,18 @@ function alignPlayback(force = false) {
   if (force || Math.abs(player.getCurrentTime() - position) > 3) player.seekTo(position, true);
 }
 async function syncPlayer() {
-  if (!room?.isCreator) { stopPlayer(); return; }
+  if (!room?.isCreator) { stopPlayer(); renderLocalPlayback(); return; }
   if (!player && !initializing && room.current) {
     initializing = true;
     try {
       await loadYoutube();
-      if (!room?.isCreator) { initializing = false; return; }
+      if (!room?.isCreator || !room.current) { initializing = false; return; }
       if (!$('#youtube-player')) { const mount = document.createElement('div'); mount.id = 'youtube-player'; $('#player-stage').append(mount); }
       player = new YT.Player('youtube-player', { width: '100%', height: '100%', playerVars: { playsinline: 1, origin: location.origin }, events: {
         onReady: () => { if (!player) return; playerReady = true; const iframe = player.getIframe(); iframe.title = '함께 듣는 YouTube 플레이어'; iframe.setAttribute('allow', 'autoplay; encrypted-media; picture-in-picture'); syncPlayer(); },
         onStateChange: event => {
           if (!room?.isCreator || !room.current || loadedSong !== room.current.id) return;
+          if (event.data !== YT.PlayerState.PLAYING) $('.room-turntable')?.classList.remove('is-playing');
           if (event.data === YT.PlayerState.PLAYING) {
             const align = needsAlignment || localPaused || localBlocked;
             localPaused = false; localBlocked = false; needsAlignment = false;
