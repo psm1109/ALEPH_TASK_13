@@ -1,5 +1,6 @@
 // Use server time anchored to the browser's monotonic clock, not its wall clock.
 export function positionAt(playback, serverNow) {
+  if (playback?.status === 'paused') return Math.max(0, playback.position || 0);
   if (playback?.status !== 'playing' || !Number.isFinite(playback.startedAt)) return 0;
   return Math.max(0, (serverNow - playback.startedAt) / 1000);
 }

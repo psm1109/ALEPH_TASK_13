@@ -23,7 +23,7 @@ export function advance(room, startedAt = Date.now()) {
 }
 
 export function playbackDue(room, now = Date.now()) {
-  return Boolean(room.current?.duration > 0 && Number.isFinite(room.playback.startedAt) && now >= room.playback.startedAt + room.current.duration * 1000);
+  return Boolean(room.playback.status === 'playing' && room.current?.duration > 0 && Number.isFinite(room.playback.startedAt) && now >= room.playback.startedAt + room.current.duration * 1000);
 }
 
 // Advance by the room clock, even if no browser sent an ended event.

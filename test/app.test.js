@@ -361,7 +361,7 @@ test('방 생성자만 재생을 담당하고 퇴장 후에도 권한을 넘기�
   assert.equal((await viewer.call(path)).data.isCreator, false);
   assert.equal((await guest.call(path + '/join', { name: '참여자' })).data.isCreator, false);
   const song = (await guest.call(path + '/songs', { videoId: 'abcdefghijk', title: '신청곡' })).data.current;
-  for (const command of ['duration', 'ended', 'unavailable']) {
+  for (const command of ['duration', 'ended', 'unavailable', 'pause', 'resume']) {
     assert.equal((await guest.call(path + '/control', { command, songId: song.id, duration: 180 })).status, 403);
   }
   assert.equal((await host.call(path)).data.isCreator, true);
@@ -370,4 +370,41 @@ test('방 생성자만 재생을 담당하고 퇴장 후에도 권한을 넘기�
   assert.equal((await guest.call(path)).data.isCreator, false);
   assert.equal((await host.call(path + '/join', { name: '다시 방장' })).data.isCreator, true);
   assert.ok(!JSON.stringify((await guest.call(path)).data).includes('creatorDevice'));
+});
+
+test('방장이 일시정지하면 재생 위치와 자동 전환이 멈추고 같은 위치부터 재개한다', async t => {
+  const redis = emulator(), store = createRoomStore(redis.backend());
+  const base = await listen(t, http.createServer(createHandler(async () => store)));
+  const host = client(base), guest = client(base);
+  const created = await host.call('/api/rooms', { title: '멈춘 레코드', name: '방장' });
+  const path = '/api/rooms/' + created.data.id;
+  await guest.call(path + '/join', { name: '참여자' });
+  const song = (await host.call(path + '/songs', { videoId: 'abcdefghijk', title: '현재 곡' })).data.current;
+  await host.call(path + '/songs', { videoId: 'lmnopqrstuv', title: '대기곡' });
+  await host.call(path + '/control', { command: 'duration', songId: song.id, duration: 180 });
+  for (const position of [-1, '45', 181]) assert.equal((await host.call(path + '/control', { command: 'pause', songId: song.id, position })).status, 400);
+  const paused = await host.call(path + '/control', { command: 'pause', songId: song.id, position: 45.5 });
+  assert.equal(paused.status, 200);
+  assert.equal(paused.data.playback.status, 'paused');
+  assert.equal(paused.data.playback.startedAt, null);
+  const future = paused.data.serverTime + 3600000;
+  assert.equal(positionAt(paused.data.playback, future), 45.5);
+  assert.equal(playablePosition(paused.data, future), 45.5);
+  const frozen = structuredClone(await store.getRoom(created.data.id));
+  assert.equal(settlePlayback(frozen, future), false);
+  assert.equal(frozen.current.id, song.id);
+  assert.equal((await host.call(path + '/control', { command: 'ended', songId: song.id })).status, 409);
+  const repeated = await host.call(path + '/control', { command: 'pause', songId: song.id, position: 0 });
+  assert.deepEqual(repeated.data.playback, paused.data.playback);
+  const heartbeat = await guest.call(path + '/heartbeat', {});
+  assert.deepEqual(heartbeat.data.playback, paused.data.playback);
+  assert.deepEqual((await host.call(path)).data.playback, paused.data.playback);
+  assert.equal((await host.call(path + '/control', { command: 'resume', songId: 'stale' })).status, 409);
+  const resumed = await host.call(path + '/control', { command: 'resume', songId: song.id });
+  assert.equal(resumed.data.playback.status, 'playing');
+  assert.ok(Math.abs(positionAt(resumed.data.playback, resumed.data.serverTime) - 45.5) < 0.1);
+  assert.equal(resumed.data.current.id, song.id);
+  assert.equal(resumed.data.queue.length, 1);
+  const resumedAgain = await host.call(path + '/control', { command: 'resume', songId: song.id });
+  assert.deepEqual(resumedAgain.data.playback, resumed.data.playback);
 });

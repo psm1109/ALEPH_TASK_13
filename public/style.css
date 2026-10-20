@@ -250,11 +250,8 @@ body:has(.room-heading) main{max-width:1480px}
 .room-grid .room-turntable #player-stage{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);width:calc(30.6% - 4.76px);aspect-ratio:1;border:0;border-radius:50%;overflow:hidden;background:#11121a;box-shadow:0 0 0 7px #111e17,0 0 0 8px #91b69c50;z-index:3}
 .room-turntable #youtube-player{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);width:178%;height:100%}
 .has-video .room-vinyl-label{visibility:hidden}
-.video-view{display:block;margin:0 auto 12px;color:var(--accent);padding:8px 12px}
-.room-grid .video-expanded .room-turntable{aspect-ratio:auto;display:flex;flex-direction:column;gap:20px}
-.video-expanded .room-vinyl{flex-shrink:0}
-.video-expanded .tonearm{height:auto;aspect-ratio:0.51}
-.room-grid .video-expanded .room-turntable #player-stage{position:relative;left:auto;top:auto;transform:none;width:100%;aspect-ratio:16/9;min-height:200px;border-radius:12px;box-shadow:none;overflow:hidden}
-.video-expanded .room-turntable #youtube-player{inset:0;transform:none;width:100%;height:100%}
-.video-expanded .room-vinyl-label{visibility:visible}
 @media(prefers-reduced-motion:reduce){.room-vinyl{animation:none}}
+
+.room-turntable #player-stage{pointer-events:none}
+.transport-controls{display:flex;justify-content:center;gap:12px;margin:0 auto 16px}
+.transport-controls button{min-width:100px}
