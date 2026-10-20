@@ -7,7 +7,9 @@ export function voteCounts(room, songId) {
 export function queue(room) {
   return [...room.songs].sort((a, b) => voteCounts(room, b.id).score - voteCounts(room, a.id).score || a.createdAt - b.createdAt || a.id.localeCompare(b.id));
 }
-export function advance(room, startedAt = Date.now()) {
+export const PLAYBACK_LEASE_MS = 10000;
+
+export function advance(room) {
   if (room.current) {
     room.history.push(room.current);
     room.history = room.history.slice(-30);
@@ -19,22 +21,30 @@ export function advance(room, startedAt = Date.now()) {
   }
   room.skipVotes = {};
   room.unavailable = {};
-  room.playback = { status: room.current ? 'playing' : 'idle', revision: room.playback.revision + 1, startedAt: room.current ? startedAt : null };
+  room.playback = { status: room.current ? 'waiting' : 'idle', revision: room.playback.revision + 1, position: 0, reportedAt: null, startedAt: null, leaseMs: PLAYBACK_LEASE_MS };
 }
 
-export function playbackDue(room, now = Date.now()) {
-  return Boolean(room.current?.duration > 0 && Number.isFinite(room.playback.startedAt) && now >= room.playback.startedAt + room.current.duration * 1000);
-}
-
-// Advance by the room clock, even if no browser sent an ended event.
+// Expire a playback lease without advancing the track or guessing unheard progress.
 export function settlePlayback(room, now = Date.now()) {
-  let changed = false;
-  while (playbackDue(room, now)) {
-    const nextStart = room.playback.startedAt + room.current.duration * 1000;
-    advance(room, nextStart);
-    changed = true;
+  const playback = room.playback;
+  if (!Number.isFinite(playback.position)) {
+    room.playback = { status: room.current ? 'waiting' : 'idle', revision: playback.revision + 1, position: 0, reportedAt: null, startedAt: null, leaseMs: PLAYBACK_LEASE_MS };
+    return true;
   }
-  return changed;
+  const creatorPresent = room.members.some(member => member.device === room.creatorDevice && now - member.lastSeen < 90000);
+  if (room.current && playback.status !== 'disconnected' && (!creatorPresent || (Number.isFinite(playback.reportedAt) && now - playback.reportedAt >= PLAYBACK_LEASE_MS))) {
+    playback.status = 'disconnected';
+    playback.startedAt = null;
+    return true;
+  }
+  return false;
+}
+
+export function creatorConnection(room, now = Date.now()) {
+  const creator = room.members.find(member => member.device === room.creatorDevice);
+  if (!creator || now - creator.lastSeen >= 30000) return 'disconnected';
+  if (room.current && room.playback.status === 'disconnected') return Number.isFinite(room.playback.reportedAt) && now - room.playback.reportedAt >= 30000 ? 'disconnected' : 'reconnecting';
+  return 'connected';
 }
 
 export function refreshPresence(room, now = Date.now()) {

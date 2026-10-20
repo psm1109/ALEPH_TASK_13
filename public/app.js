@@ -1,4 +1,4 @@
-import { positionAt, playablePosition } from './session.js';
+import { positionAt, playbackLabel } from './session.js';
 const $ = selector => document.querySelector(selector);
 let savedTheme;
 try { savedTheme = localStorage.getItem('sai-theme'); } catch {}
@@ -19,9 +19,13 @@ $('#theme-toggle').onclick = () => {
 const esc = value => String(value ?? '').replace(/[&<>"']/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[char]));
 const initialRoomId = new URLSearchParams(location.search).get('room');
 let roomId = null;
-let room = null, pollBusy = false, lastSnapshot = '', searchItems = [], player = null, playerReady = false, loadedSong = null, appliedRevision = -1, youtubePromise;
+let room = null, pollBusy = false, lastSnapshot = '', searchItems = [], player = null, playerReady = false, loadedSong = null, youtubePromise;
 let lastHeartbeat = 0, lastRefresh = 0, serverClockOffset = 0;
-let localPaused = false, localBlocked = false, needsAlignment = false, durationSentFor = null, durationBusy = false;
+let localPaused = false, localBlocked = false, durationSentFor = null, durationBusy = false;
+const playbackSession = crypto.randomUUID();
+let claimedSong = null, claimedRevision = null, reportSequence = 0, lastPlaybackReport = 0, lastClaim = 0;
+let internalPause = false, awaitingPlayback = false;
+let syncBusy = false, reportBusy = false, playbackFailure = false, unavailableSong = null;
 const serverNow = () => performance.now() + serverClockOffset;
 let disposeLandingGuide = () => {};
 function mountLandingGuide() {
@@ -87,7 +91,7 @@ async function request(action = '', data, global = false, targetRoomId = roomId)
   return result;
 }
 async function act(action, data) { const result = await request(action, data); if (result.deleted) exitRoom(); else accept(result); return result; }
-function stopPlayer() { if (player) player.destroy(); player = null; playerReady = false; loadedSong = null; appliedRevision = -1; durationSentFor = null; localPaused = false; localBlocked = false; }
+function stopPlayer() { if (player) player.destroy(); player = null; playerReady = false; loadedSong = null; durationSentFor = null; localPaused = false; localBlocked = false; claimedSong = null; claimedRevision = null; lastClaim = 0; unavailableSong = null; awaitingPlayback = false; }
 function exitRoom() {
   stopPlayer(); room = null; roomId = null; lastSnapshot = ''; lastHeartbeat = 0;
   history.replaceState(null, '', '/'); document.title = '사이 — 우리 사이, 다음 한 곡'; landing();
@@ -130,7 +134,7 @@ function landing() {
 }
 function shell() {
   disposeLandingGuide();
-  $('#app').innerHTML = `<section class="room-heading"><div><span class="eyebrow"><span class="dot"></span> OUR LISTENING ROOM</span><h1 id="room-title">모임에 연결 중…</h1><p class="muted">서로의 취향 사이에서, 함께 듣기 좋은 한 곡.</p></div><button id="invite" class="outline">초대 링크 복사 ↗</button></section><div id="connection" class="connection" role="status"></div><div class="room-grid"><section class="left-column"><article class="panel player-panel"><div class="panel-heading"><span class="eyebrow">NOW PLAYING</span><span class="badge" id="player-role"></span></div><div class="room-turntable" aria-hidden="true"><div class="room-vinyl"><div class="room-vinyl-label"><span>SAI</span><small>LISTEN TOGETHER</small></div></div><img class="tonearm" src="/tonearm.svg" alt="" draggable="false"></div><div id="player-stage"><div id="player-placeholder" class="player-placeholder"><div class="record"><div class="record-center">sai</div></div><p>우리의 첫 곡을 기다리는 중</p><span>곡을 신청하고 함께 재생해 보세요.</span></div><div id="youtube-player"></div></div><div id="current-info"></div><p id="player-message" class="small muted" role="status"></p><div id="play-controls"></div></article><article class="panel request-panel"><div class="panel-heading"><h2>다음엔 뭐 들을까요?</h2><span class="muted small">REQUEST A SONG</span></div><div id="request-content"></div></article></section><aside class="right-column"><section class="panel queue-panel"><div class="panel-heading"><h2>함께 고른 다음 곡 <span id="queue-count" class="count">0</span></h2><span class="small muted">투표순</span></div><p class="small muted queue-help">듣고 싶어요 +1 · 이번엔 패스 −1. 점수가 높은 곡부터, 동점은 신청순으로 들어요. 첫 곡은 바로 시작하니 한 곡 더 신청해 투표해 보세요.</p><div id="queue"></div></section><section class="panel people-panel"><div class="panel-heading"><h2>함께 듣는 사람들</h2><span id="people-count" class="small muted"></span></div><div id="people"></div><p class="small muted">접속을 90초 동안 확인하지 못한 참여자는 자동으로 퇴장해요.</p></section><div class="rule-note"><span>↳</span><p>말하기 어려운 취향도, 한 표면 충분해요.<br><b>투표한 사람의 이름은 공개하지 않아요.</b></p></div></aside></div>`;
+  $('#app').innerHTML = `<section class="room-heading"><div><span class="eyebrow"><span class="dot"></span> OUR LISTENING ROOM</span><h1 id="room-title">모임에 연결 중…</h1><p class="muted">서로의 취향 사이에서, 함께 듣기 좋은 한 곡.</p></div><button id="invite" class="outline">초대 링크 복사 ↗</button></section><div id="connection" class="connection" role="status"></div><div class="room-grid"><section class="left-column"><article class="panel player-panel"><div class="panel-heading"><span class="eyebrow">NOW PLAYING</span><span class="badge" id="player-role"></span></div><div class="room-turntable" aria-hidden="true"><div class="room-vinyl"><div class="room-vinyl-label"><span>SAI</span><small>LISTEN TOGETHER</small></div></div><img class="tonearm" src="/tonearm.svg" alt="" draggable="false"></div><div id="player-stage"><div id="player-placeholder" class="player-placeholder"><div class="record"><div class="record-center">sai</div></div><p>우리의 첫 곡을 기다리는 중</p><span>곡을 신청하고 함께 재생해 보세요.</span></div><div id="youtube-player"></div></div><p id="host-status" class="small muted" role="status"></p><div id="current-info"></div><p id="player-message" class="small muted" role="status"></p><div id="play-controls"></div></article><article class="panel request-panel"><div class="panel-heading"><h2>다음엔 뭐 들을까요?</h2><span class="muted small">REQUEST A SONG</span></div><div id="request-content"></div></article></section><aside class="right-column"><section class="panel queue-panel"><div class="panel-heading"><h2>함께 고른 다음 곡 <span id="queue-count" class="count">0</span></h2><span class="small muted">투표순</span></div><p class="small muted queue-help">듣고 싶어요 +1 · 이번엔 패스 −1. 점수가 높은 곡부터, 동점은 신청순으로 들어요. 첫 곡은 바로 시작하니 한 곡 더 신청해 투표해 보세요.</p><div id="queue"></div></section><section class="panel people-panel"><div class="panel-heading"><h2>함께 듣는 사람들</h2><span id="people-count" class="small muted"></span></div><div id="people"></div><p class="small muted">접속을 90초 동안 확인하지 못한 참여자는 자동으로 퇴장해요.</p></section><div class="rule-note"><span>↳</span><p>말하기 어려운 취향도, 한 표면 충분해요.<br><b>투표한 사람의 이름은 공개하지 않아요.</b></p></div></aside></div>`;
   $('#app').insertAdjacentHTML('afterbegin', '<div class="room-backdrop" aria-hidden="true"></div>');
   $('#invite').onclick = async () => {
     const url = new URL(location.href); url.search = `?room=${roomId}`;
@@ -155,24 +159,24 @@ function renderRoom() {
   $('#room-title').textContent = room.title;
   document.title = `${room.title} — 사이`;
   $('#room-code').textContent = room.id;
-  $('#player-role').textContent = room.isCreator ? '방 생성자 · 음악 재생' : '방 생성자의 기기에서 재생 중';
+  $('#player-role').textContent = room.isCreator ? '방장 · 음악 재생' : '방장 기기에서 음악 재생';
   $('#queue-count').textContent = room.queue.length;
   $('#people-count').textContent = `${room.members.length}명`;
   $('#people').innerHTML = room.members.map(m => `<span class="person"><span class="avatar">${m.id === room.me?.id ? '나' : esc(m.name.slice(0, 1))}</span>${esc(m.name)}</span>`).join('');
   const song = room.current;
-  $('#current-info').innerHTML = song ? `<div class="playing-label"><span class="equalizer">ııı</span>${room.playback.status === 'paused' ? '잠시 쉬는 중' : '함께 듣는 중'}</div><h2>${esc(song.title)}</h2><p class="muted">${esc(song.artist || 'YouTube')} <span class="separator">/</span> ${esc(song.addedByName)} 님의 신청곡</p><a class="external small" href="https://www.youtube.com/watch?v=${song.videoId}" target="_blank" rel="noopener">YouTube에서 보기 ↗</a>` : '<h2>첫 곡은 어떤 음악일까요?</h2><p class="muted">아래에서 듣고 싶은 곡을 신청해 주세요.</p>';
+  $('#current-info').innerHTML = song ? `<div class="playing-label"><span class="equalizer">ııı</span><span id="playback-status">${playbackLabel(room, serverNow())}</span></div><h2>${esc(song.title)}</h2><p class="muted">${esc(song.artist || 'YouTube')} <span class="separator">/</span> ${esc(song.addedByName)} 님의 신청곡</p><a class="external small" href="https://www.youtube.com/watch?v=${song.videoId}" target="_blank" rel="noopener">YouTube에서 보기 ↗</a>` : '<h2>첫 곡은 어떤 음악일까요?</h2><p class="muted">아래에서 듣고 싶은 곡을 신청해 주세요.</p>';
   if (!room.isCreator) {
     $('#player-placeholder').hidden = false;
-    $('#player-placeholder p').textContent = song ? '방을 만든 사람의 기기에서 재생 중이에요' : '우리의 첫 곡을 기다리는 중';
+    $('#player-placeholder p').textContent = song ? '음악은 방장 기기에서 재생돼요' : '우리의 첫 곡을 기다리는 중';
     $('#player-placeholder span').textContent = '음악은 방을 만든 사람에게만 재생돼요. 곡 신청과 투표로 함께해요.';
   } else $('#player-placeholder').hidden = Boolean(song);
   $('#play-controls').innerHTML = song ? `<button class="skip-button ${song.mySkip ? 'selected' : ''}" id="skip" ${!room.me ? 'disabled' : ''}>${song.mySkip ? '✓ 건너뛰기 동의 취소' : '↦ 이 곡 건너뛰기 투표'} <b>${song.skipCount} / ${room.threshold}</b></button><p class="small muted center">현재 참여 ${room.members.length}명 중 ${room.threshold}명이 동의하면 다음 곡으로 넘어가요.</p>` : '<p class="small muted">첫 곡을 신청하면 바로 자동 재생돼요. 이후 곡은 투표 순서로 이어져요.</p>';
   if ($('#skip')) $('#skip').onclick = () => safe(() => act('skip', { songId: room.current.id, value: !room.current.mySkip }));
-  $('#play-controls').insertAdjacentHTML('beforeend', '<p id="session-position" class="small muted center" aria-live="off"></p><button id="resume-listening" class="primary wide" hidden>방의 현재 위치로 듣기 ▶</button>');
+  $('#play-controls').insertAdjacentHTML('beforeend', '<p id="session-position" class="small muted center" aria-live="off"></p><button id="resume-listening" class="primary wide" hidden>이어서 듣기 ▶</button>');
   $('#resume-listening').onclick = () => {
     if (!room?.isCreator || !playerReady || !room?.current) return;
-    localPaused = false; localBlocked = false; needsAlignment = true;
-    player.seekTo(playablePosition(room, serverNow()), true); player.playVideo(); renderLocalPlayback();
+    localPaused = false; localBlocked = false;
+    player.playVideo(); renderLocalPlayback();
   };
   renderLocalPlayback();
   $('#queue').innerHTML = room.queue.length ? room.queue.map((s, index) => `<article class="song-row"><span class="song-rank">${String(index + 1).padStart(2, '0')}</span><img src="https://i.ytimg.com/vi/${s.videoId}/default.jpg" alt="" loading="lazy"><div class="song-detail"><h3>${esc(s.title)}</h3><p>${esc(s.artist || 'YouTube')} · ${esc(s.addedByName)} 신청</p><div class="vote-actions"><button data-song="${s.id}" data-vote="1" class="vote ${s.myVote === 1 ? 'selected' : ''}" aria-pressed="${s.myVote === 1}" ${!room.me ? 'disabled' : ''}>♡ 듣고 싶어요 <b>${s.likes}</b></button><button data-song="${s.id}" data-vote="-1" class="vote ${s.myVote === -1 ? 'selected' : ''}" aria-pressed="${s.myVote === -1}" ${!room.me ? 'disabled' : ''}>− 이번엔 패스 <b>${s.passes}</b></button></div></div></article>`).join('') : '<div class="empty-queue"><span>＋</span><h3>아직 조용한 대기열</h3><p>좋아하는 곡 하나로<br>이 공간을 채워 주세요.</p></div>';
@@ -217,75 +221,114 @@ function loadYoutube() {
     document.head.append(script);
   }); return youtubePromise;
 }
-let initializing = false;
 function loadedVideoMatches() {
   try { return new URL(player.getVideoUrl()).searchParams.get('v') === room?.current?.videoId; } catch { return false; }
 }
 function renderLocalPlayback() {
-  if ($('#resume-listening')) $('#resume-listening').hidden = !(room?.isCreator && room.current && (localPaused || localBlocked));
+  if ($('#resume-listening')) $('#resume-listening').hidden = !(room?.isCreator && claimedSong === room.current?.id && (localPaused || localBlocked));
+  const label = playbackLabel(room, serverNow());
+  if ($('#host-status')) $('#host-status').textContent = (room?.creatorConnection === 'connected' && label !== '방장 연결 확인 중' && label !== '방장 연결 끊김' ? '방장 연결됨 · ' : '') + label + (room?.playback.status === 'disconnected' ? ' · 마지막 확인 위치에서 기다려요.' : '');
+  if ($('#playback-status')) $('#playback-status').textContent = label;
   if ($('#session-position')) {
     const seconds = Math.floor(positionAt(room?.playback, serverNow()));
-    $('#session-position').textContent = room?.current ? `방의 재생 위치 ${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, '0')} · 방 생성자의 기기에서 재생돼요` : '';
+    $('#session-position').textContent = room?.current ? `재생 위치 ${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, '0')} · 방장 기기에서 재생돼요` : '';
   }
 }
 async function reportDuration() {
   if (!room?.isCreator || !room.current || !playerReady || loadedSong !== room.current.id || durationBusy || room.current.duration || durationSentFor === loadedSong) return;
   const duration = player.getDuration();
-  if (!Number.isFinite(duration) || duration < 1 || duration > 43200) return;
-  if (!loadedVideoMatches()) return;
+  if (!Number.isFinite(duration) || duration < 1 || duration > 43200 || !loadedVideoMatches()) return;
   const songId = loadedSong; durationBusy = true;
   try { await act('control', { command: 'duration', songId, duration }); durationSentFor = songId; }
   catch (error) { if (error.status === 409) refresh(); }
   finally { durationBusy = false; }
 }
-function alignPlayback(force = false) {
-  if (!playerReady || !room?.isCreator || !room.current || loadedSong !== room.current.id || document.hidden) return;
-  if (player.getPlayerState() !== YT.PlayerState.PLAYING || !loadedVideoMatches()) return;
-  const position = playablePosition(room, serverNow());
-  if (force || Math.abs(player.getCurrentTime() - position) > 3) player.seekTo(position, true);
+function playbackChanged() { lastPlaybackReport = 0; reportPlayback(); renderLocalPlayback(); }
+async function reportPlayback() {
+  if (!room?.isCreator || !room.current || !playerReady || loadedSong !== room.current.id || claimedSong !== loadedSong || reportBusy || syncBusy || !loadedVideoMatches() || Date.now() - lastPlaybackReport < 3000) return;
+  const songId = loadedSong, revision = claimedRevision;
+  reportBusy = true; lastPlaybackReport = Date.now();
+  try {
+    // Reconnect before sampling again: no locally elapsed, unconfirmed time is saved.
+    if (playbackFailure || !Number.isFinite(room.playback.reportedAt) || serverNow() - room.playback.reportedAt >= room.playback.leaseMs) {
+      claimedSong = null; lastClaim = 0;
+      accept(await request());
+      return;
+    }
+    await reportDuration();
+    if (room?.current?.id !== songId) return;
+    const state = player.getPlayerState();
+    const status = localBlocked ? 'blocked' : awaitingPlayback && state === YT.PlayerState.PLAYING ? 'waiting' : ({ 1: 'playing', 2: 'paused', 3: 'buffering' })[state] || 'waiting';
+    const command = unavailableSong === songId ? 'unavailable' : !awaitingPlayback && state === YT.PlayerState.ENDED ? 'ended' : 'progress';
+    // loadVideoById is asynchronous; ignore its old playhead until playback starts.
+    const position = awaitingPlayback ? room.playback.position : player.getCurrentTime();
+    const result = await request('control', { command, songId, sessionId: playbackSession, revision, sequence: ++reportSequence, status, position });
+    playbackFailure = false;
+    accept(result);
+  } catch (error) {
+    if (room?.current?.id !== songId) return;
+    if (error.status === 409) { claimedSong = null; lastClaim = 0; await refresh(); }
+    else { playbackFailure = true; if ($('#connection')) $('#connection').textContent = '재생 상태를 전송하지 못했어요. 연결 복구 후 마지막 확인 위치에서 이어 들어요.'; }
+  } finally { reportBusy = false; }
 }
 async function syncPlayer() {
+  if (syncBusy) return;
   if (!room?.isCreator) { stopPlayer(); return; }
-  if (!player && !initializing && room.current) {
-    initializing = true;
-    try {
+  if (!room.current) {
+    if (playerReady) { loadedSong = null; player.stopVideo(); }
+    claimedSong = null; return;
+  }
+  syncBusy = true;
+  try {
+    if (claimedSong !== room.current.id || claimedRevision !== room.playback.revision || room.playback.status === 'disconnected') {
+      if (Date.now() - lastClaim < 3000) return;
+      lastClaim = Date.now();
+      const songId = room.current.id;
+      if (playerReady) { internalPause = true; player.pauseVideo(); }
+      const result = await request('control', { command: 'attach', songId, sessionId: playbackSession });
+      if (result.current?.id !== songId) { accept(result); return; }
+      claimedSong = songId; claimedRevision = result.playback.revision; reportSequence = 0;
+      loadedSong = null; playbackFailure = false; unavailableSong = null;
+      accept(result);
+    }
+    if (!player) {
       await loadYoutube();
-      if (!room?.isCreator) { initializing = false; return; }
+      if (!room?.isCreator || !room.current) return;
       if (!$('#youtube-player')) { const mount = document.createElement('div'); mount.id = 'youtube-player'; $('#player-stage').append(mount); }
       player = new YT.Player('youtube-player', { width: '100%', height: '100%', playerVars: { playsinline: 1, origin: location.origin }, events: {
         onReady: () => { if (!player) return; playerReady = true; const iframe = player.getIframe(); iframe.title = '함께 듣는 YouTube 플레이어'; iframe.setAttribute('allow', 'autoplay; encrypted-media; picture-in-picture'); syncPlayer(); },
         onStateChange: event => {
-          if (!room?.isCreator || !room.current || loadedSong !== room.current.id) return;
+          if (!room?.isCreator || !room.current || loadedSong !== room.current.id || !loadedVideoMatches()) return;
           if (event.data === YT.PlayerState.PLAYING) {
-            const align = needsAlignment || localPaused || localBlocked;
-            localPaused = false; localBlocked = false; needsAlignment = false;
+            awaitingPlayback = false; internalPause = false; localPaused = false; localBlocked = false;
             if ($('#player-message')) $('#player-message').textContent = '';
-            alignPlayback(align); reportDuration(); renderLocalPlayback();
           } else if (event.data === YT.PlayerState.PAUSED) {
-            localPaused = true; renderLocalPlayback();
-          } else if (event.data === YT.PlayerState.ENDED) {
-            safe(async () => { try { await act('control', { command: 'ended', songId: loadedSong }); } catch (error) { if (error.status !== 409) throw error; await refresh(); } });
+            if (internalPause) { internalPause = false; return; }
+            localPaused = true;
           }
+          playbackChanged();
         },
-        onAutoplayBlocked: () => { localBlocked = true; if ($('#player-message')) $('#player-message').textContent = '소리를 켜면 방에서 지금 흐르는 위치부터 합류해요.'; renderLocalPlayback(); },
-        onError: () => { if (room?.isCreator && loadedSong === room.current?.id) { if ($('#player-message')) $('#player-message').textContent = '방 생성자의 기기에서 재생할 수 없는 영상이에요. 다음 곡으로 넘어가요.'; safe(() => act('control', { command: 'unavailable', songId: loadedSong })); } },
+        onAutoplayBlocked: () => { localBlocked = true; if ($('#player-message')) $('#player-message').textContent = '이어서 듣기를 누르면 멈춘 위치에서 음악을 시작해요.'; playbackChanged(); },
+        onError: () => { if (room?.isCreator && loadedSong === room.current?.id && loadedVideoMatches()) { unavailableSong = loadedSong; if ($('#player-message')) $('#player-message').textContent = '재생할 수 없는 영상이에요. 다음 곡으로 넘어가요.'; playbackChanged(); } },
       } });
-    } catch (error) { if ($('#player-message')) $('#player-message').textContent = error.message; }
-    finally { initializing = false; }
-  }
-  if (!playerReady) return;
-  const iframe = player.getIframe(); iframe.hidden = !room.current;
-  if (!room.current) { player.stopVideo(); loadedSong = null; appliedRevision = room.playback.revision; return; }
-  if (loadedSong !== room.current.id) {
-    loadedSong = room.current.id; appliedRevision = -1; durationSentFor = null; needsAlignment = true; $('#player-message').textContent = '';
-    const video = { videoId: room.current.videoId, startSeconds: playablePosition(room, serverNow()) };
-    if (localPaused || localBlocked) player.cueVideoById(video); else player.loadVideoById(video);
-  }
-  if (appliedRevision !== room.playback.revision) {
-    appliedRevision = room.playback.revision;
-    if (!localPaused && !localBlocked) player.playVideo();
-  }
-  alignPlayback(); reportDuration(); renderLocalPlayback();
+    }
+    if (!playerReady || claimedSong !== room.current?.id) return;
+    player.getIframe().hidden = false;
+    if (loadedSong !== room.current.id) {
+      loadedSong = room.current.id; durationSentFor = null; awaitingPlayback = true;
+      $('#player-message').textContent = '';
+      // Always load the confirmed position, never the estimated wall-clock position.
+      const video = { videoId: room.current.videoId, startSeconds: room.playback.position || 0 };
+      const hold = localPaused || localBlocked;
+      localPaused = hold;
+      if (hold) player.cueVideoById(video); else player.loadVideoById(video);
+      lastPlaybackReport = 0;
+    }
+    reportDuration(); renderLocalPlayback();
+  } catch (error) {
+    claimedSong = null;
+    if ($('#player-message')) $('#player-message').textContent = error.message;
+  } finally { syncBusy = false; }
 }
 for (const name of ['rules', 'research']) $(`#${name}-open`).onclick = () => $(`#${name}`).showModal();
 document.querySelectorAll('[data-close]').forEach(button => button.onclick = () => $(`#${button.dataset.close}`).close());
@@ -304,5 +347,5 @@ async function heartbeat() {
 }
 landing();
 if (initialRoomId) enterRoom(initialRoomId);
-setInterval(() => { if (Date.now() - lastRefresh >= 5000) refresh(); heartbeat(); reportDuration(); renderLocalPlayback(); }, 1000);
-document.addEventListener('visibilitychange', () => { if (!document.hidden) { needsAlignment = true; refresh(); } });
+setInterval(() => { if (Date.now() - lastRefresh >= 5000) refresh(); heartbeat(); syncPlayer(); reportPlayback(); renderLocalPlayback(); }, 1000);
+document.addEventListener('visibilitychange', () => { if (!document.hidden) { refresh(); } });

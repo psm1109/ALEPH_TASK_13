@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { runInNewContext } from 'node:vm';
 import { queue, refreshPresence, advance, settlePlayback } from '../room.js';
-import { positionAt, playablePosition } from '../public/session.js';
+import { positionAt, playablePosition, playbackLabel } from '../public/session.js';
 import { createHandler, videoId } from '../lib/handler.js';
 import { createRoomStore, createRedisBackend, COMPARE_AND_SET } from '../lib/storage.js';
 
@@ -18,6 +18,13 @@ function client(base) {
     return { status: response.status, data: await response.json() };
   } };
 }
+async function attachPlayer(host, path, songId, sessionId = 'test-player-session-0001') {
+  const attached = await host.call(path + '/control', { command: 'attach', songId, sessionId });
+  assert.equal(attached.status, 200);
+  let sequence = 0;
+  return (command, details = {}) => host.call(path + '/control', { command, songId, sessionId, revision: attached.data.playback.revision, sequence: ++sequence, ...details });
+}
+
 async function listen(t, server) {
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
   t.after(async () => { server.closeAllConnections(); await new Promise(resolve => server.close(resolve)); });
@@ -113,7 +120,7 @@ test('로컬: 6자리 코드·즉시 재생·한 표·과반 전환·퇴장 삭�
   assert.equal(again.data.me.id, joined.data.me.id); assert.equal(again.data.members.length, 2);
   await b.call(path + '/join', { name: 'B' });
   const first = await host.call(path + '/songs', { url: 'https://youtu.be/abcdefghijk', title: '첫 곡' });
-  assert.equal(first.data.current.videoId, 'abcdefghijk'); assert.equal(first.data.playback.status, 'playing'); assert.equal(first.data.queue.length, 0);
+  assert.equal(first.data.current.videoId, 'abcdefghijk'); assert.equal(first.data.playback.status, 'waiting'); assert.equal(first.data.queue.length, 0);
   assert.equal((await a.call(path + '/songs', { videoId: 'abcdefghijk', title: '중복' })).status, 400);
   assert.equal((await host.call(path + '/songs', { url: 'https://youtube.com.evil.test/watch?v=abcdefghijk', title: '잘못된 링크' })).status, 400);
   const added = await a.call(path + '/songs', { videoId: 'lmnopqrstuv', title: '다음 곡' });
@@ -180,8 +187,10 @@ test('분산 함수: 동시 투표·신청·종료의 중복 방지와 공유 �
   assert.equal((await host.call(path)).data.queue[0].likes, 3);
   const duplicates = await Promise.all([a.call(path + '/songs', { videoId: '12345678901', title: '중복 신청' }), b.call(path + '/songs', { videoId: '12345678901', title: '중복 신청' })]);
   assert.deepEqual(duplicates.map(v => v.status).sort(), [200, 400]);
-  await stores[0].updateRoom(created.data.id, room => { room.current.duration = 10; room.playback.startedAt = Date.now() - 11000; });
-  const ends = await Promise.all([host.call(path + '/control', { command: 'ended', songId: first.data.current.id }), host.call(path + '/control', { command: 'ended', songId: first.data.current.id })]);
+  await host.call(path + '/control', { command: 'duration', songId: first.data.current.id, duration: 10 });
+  const report = await attachPlayer(host, path, first.data.current.id);
+  await report('progress', { status: 'playing', position: 9.5 });
+  const ends = await Promise.all([report('ended', { position: 10 }), report('ended', { position: 10 })]);
   assert.deepEqual(ends.map(v => v.status).sort(), [200, 409]);
   let state = (await host.call(path)).data;
   assert.equal(state.history.length, 1); assert.equal(state.queue.length, 1);
@@ -204,7 +213,7 @@ test('분산 함수: 동시 투표·신청·종료의 중복 방지와 공유 �
   assert.equal((await host.call(path)).status, 404);
 });
 
-test('누가 퇴장해도 재생 시각을 유지하고 접속 확인으로 방 수명만 갱신한다', async t => {
+test('방장 부재 시 곡을 보존하고 남은 참여자의 접속 확인으로 방 수명을 갱신한다', async t => {
   const redis = emulator(), store = createRoomStore(redis.backend());
   const base = await listen(t, http.createServer(createHandler(async () => store)));
   const host = client(base), guest = client(base);
@@ -225,52 +234,51 @@ test('누가 퇴장해도 재생 시각을 유지하고 접속 확인으로 방 
   assert.ok(!redis.records.has('test:production:room:' + created.data.id));
 });
 
-test('중간 입장은 서버의 현재 위치를 받고 시간 경과만으로 다음 곡을 이어 간다', async t => {
+test('중간 입장은 실제 위치를 받고 곡 길이가 지나도 자동으로 건너뛰지 않는다', async t => {
   const redis = emulator(), store = createRoomStore(redis.backend());
   const base = await listen(t, http.createServer(createHandler(async () => store)));
-  const a = client(base), b = client(base), viewer = client(base);
-  const created = await a.call('/api/rooms', { title: '공유 타임라인', name: '먼저' });
+  const host = client(base), guest = client(base), viewer = client(base);
+  const created = await host.call('/api/rooms', { title: '실제 재생', name: '방장' });
   const path = '/api/rooms/' + created.data.id;
-  const added = await a.call(path + '/songs', { videoId: 'abcdefghijk', title: '이미 흐르는 곡' });
-  const firstId = added.data.current.id;
-  assert.equal((await a.call(path + '/control', { command: 'duration', songId: firstId, duration: 0 })).status, 400);
-  await a.call(path + '/control', { command: 'duration', songId: firstId, duration: 180 });
-  await store.updateRoom(created.data.id, room => { room.playback.startedAt = Date.now() - 80000; });
-  const late = await b.call(path + '/join', { name: '나중' });
-  assert.equal(late.data.current.id, firstId);
+  const first = (await host.call(path + '/songs', { videoId: 'abcdefghijk', title: '현재 곡' })).data.current;
+  assert.equal((await host.call(path + '/control', { command: 'duration', songId: first.id, duration: 0 })).status, 400);
+  await host.call(path + '/control', { command: 'duration', songId: first.id, duration: 180 });
+  const report = await attachPlayer(host, path, first.id);
+  await report('progress', { status: 'playing', position: 80 });
+  const late = await guest.call(path + '/join', { name: '참여자' });
   assert.ok(positionAt(late.data.playback, late.data.serverTime) >= 80);
   assert.ok(positionAt(late.data.playback, late.data.serverTime) < 82);
-  assert.equal((await b.call(path + '/control', { command: 'ended', songId: firstId })).status, 403);
-  // One browser's video error cannot skip a song for the other participant.
-  const failed = await b.call(path + '/control', { command: 'unavailable', songId: firstId });
-  assert.equal(failed.status, 403);
-  const queued = await a.call(path + '/songs', { videoId: 'lmnopqrstuv', title: '다음 곡' });
-  const nextId = queued.data.queue[0].id;
-  const start = Date.now() - 185000;
-  await store.updateRoom(created.data.id, room => { room.playback.startedAt = start; room.songs[0].duration = 60; });
+  await host.call(path + '/songs', { videoId: 'lmnopqrstuv', title: '다음 곡' });
+  assert.equal((await guest.call(path + '/control', { command: 'ended', songId: first.id })).status, 403);
+  await store.updateRoom(created.data.id, room => { room.playback.reportedAt = Date.now() - 185000; });
   const ttlBefore = redis.records.get('test:production:room:' + created.data.id).until;
-  // No ended event: a read computes the next track from the shared clock.
   const elapsed = await viewer.call(path);
-  assert.equal(elapsed.data.current.id, nextId);
-  assert.equal(elapsed.data.playback.startedAt, start + 180000);
-  assert.ok(positionAt(elapsed.data.playback, elapsed.data.serverTime) >= 5);
+  assert.equal(elapsed.data.current.id, first.id);
+  assert.equal(elapsed.data.playback.position, 80);
+  assert.equal(elapsed.data.playback.status, 'disconnected');
+  assert.equal(elapsed.data.history.length, 0);
+  assert.equal(elapsed.data.queue.length, 1);
   assert.equal(redis.records.get('test:production:room:' + created.data.id).until, ttlBefore);
-  const fresh = await b.call(path);
-  assert.equal(fresh.data.current.id, nextId); assert.equal(fresh.data.history.length, 1);
-  redis.tick(90001); assert.equal((await viewer.call(path)).status, 404);
+  assert.equal((await report('progress', { status: 'playing', position: 175 })).status, 409);
+  const resumed = await attachPlayer(host, path, first.id);
+  assert.equal((await viewer.call(path)).data.playback.position, 80);
+  await resumed('progress', { status: 'playing', position: 82 });
+  assert.equal((await viewer.call(path)).data.playback.position, 82);
 });
 
-test('공유 재생 위치 계산과 지연된 여러 곡 전환을 검증한다', () => {
-  const room = { members: [], votes: {}, songs: [{ id: 'a', addedBy: 'x', duration: 10, createdAt: 0 }, { id: 'b', addedBy: 'x', duration: 20, createdAt: 1 }, { id: 'c', addedBy: 'y', duration: 30, createdAt: 2 }], current: null, history: [], playback: { status: 'idle', revision: 0 }, lastRequester: null };
-  advance(room, 100000);
-  assert.equal(positionAt(room.playback, 108000), 8);
-  assert.equal(playablePosition(room, 120000), 9.9);
-  assert.equal(positionAt({ status: 'idle', startedAt: null }, 120000), 0);
-  assert.equal(settlePlayback(room, 145000), true);
-  // Equal scores keep registration order; starts follow track ends rather than request time.
-  assert.equal(room.current.id, 'c'); assert.equal(room.playback.startedAt, 130000);
-  assert.equal(positionAt(room.playback, 145000), 15);
-  settlePlayback(room, 170000); assert.equal(room.current, null); assert.equal(room.playback.startedAt, null);
+test('공유 위치는 버퍼링·정지·보고 만료 시 마지막 확인 위치에서 멈춘다', () => {
+  const playback = { status: 'playing', position: 8, reportedAt: 100000, leaseMs: 10000 };
+  assert.equal(positionAt(playback, 102000), 10);
+  assert.equal(positionAt(playback, 110000), 8);
+  for (const status of ['buffering', 'paused', 'blocked', 'disconnected', 'waiting']) assert.equal(positionAt({ ...playback, status }, 108000), 8);
+  assert.equal(playablePosition({ current: { duration: 10 }, playback }, 108000), 9.9);
+  assert.equal(positionAt(null, 100000), 0);
+  const room = { members: [{ device: 'host', lastSeen: 100000 }], creatorDevice: 'host', current: { id: 'a' }, history: [], playback };
+  assert.equal(settlePlayback(room, 110000), true);
+  assert.equal(room.current.id, 'a'); assert.equal(room.playback.position, 8);
+  assert.equal(settlePlayback(room, 120000), false);
+  assert.equal(playbackLabel({ ...room, creatorConnection: 'reconnecting' }, 120000), '방장 연결 확인 중');
+  assert.equal(playbackLabel({ ...room, creatorConnection: 'disconnected' }, 120000), '방장 연결 끊김');
 });
 
 test('Vercel 재작성·파싱된 body·보안 쿠키·필수 DB 설정을 처리한다', async () => {
@@ -341,8 +349,10 @@ test('찬성 2표 곡이 찬성 1·패스 1표 곡보다 먼저 표시되고 실
       await first.call(path + '/skip', { songId: playing.data.current.id, value: true });
       state = (await second.call(path + '/skip', { songId: playing.data.current.id, value: true })).data;
     } else {
-      await store.updateRoom(created.data.id, room => { room.current.duration = 1; room.playback.startedAt = Date.now() - 2000; });
-      state = (await first.call(path + '/control', { command: 'ended', songId: playing.data.current.id })).data;
+      await first.call(path + '/control', { command: 'duration', songId: playing.data.current.id, duration: 10 });
+      const report = await attachPlayer(first, path, playing.data.current.id);
+      await report('progress', { status: 'playing', position: 9.5 });
+      state = (await report('ended', { position: 10 })).data;
     }
     assert.equal(displayedNext, highId);
     assert.equal(state.current.id, displayedNext);
@@ -365,9 +375,161 @@ test('방 생성자만 재생을 담당하고 퇴장 후에도 권한을 넘기�
     assert.equal((await guest.call(path + '/control', { command, songId: song.id, duration: 180 })).status, 403);
   }
   assert.equal((await host.call(path)).data.isCreator, true);
-  assert.equal((await host.call(path + '/control', { command: 'unavailable', songId: song.id })).data.current, null);
+  const report = await attachPlayer(host, path, song.id);
+  assert.equal((await report('unavailable')).data.current, null);
   await host.call(path + '/leave', {});
   assert.equal((await guest.call(path)).data.isCreator, false);
   assert.equal((await host.call(path + '/join', { name: '다시 방장' })).data.isCreator, true);
   assert.ok(!JSON.stringify((await guest.call(path)).data).includes('creatorDevice'));
+});
+
+
+test('재생 보고는 상태를 보존하고 오래된 순서·다른 탭·이전 연결·이른 종료를 거절한다', async t => {
+  const redis = emulator(), store = createRoomStore(redis.backend());
+  const base = await listen(t, http.createServer(createHandler(async () => store)));
+  const host = client(base), guest = client(base);
+  const created = await host.call('/api/rooms', { title: '보고 순서', name: '방장' });
+  const path = '/api/rooms/' + created.data.id;
+  await guest.call(path + '/join', { name: '함께' });
+  const song = (await host.call(path + '/songs', { videoId: 'abcdefghijk', title: '현재 곡' })).data.current;
+  await host.call(path + '/control', { command: 'duration', songId: song.id, duration: 180 });
+  await host.call(path + '/songs', { videoId: 'lmnopqrstuv', title: '다음 곡' });
+  const sessionId = 'first-player-session-0001';
+  const attached = await host.call(path + '/control', { command: 'attach', songId: song.id, sessionId });
+  const revision = attached.data.playback.revision;
+  const send = details => host.call(path + '/control', { command: 'progress', songId: song.id, sessionId, revision, ...details });
+  for (const [i, status] of ['playing', 'buffering', 'paused', 'blocked', 'waiting'].entries()) {
+    const result = await send({ sequence: i + 1, status, position: 40 });
+    assert.equal(result.status, 200); assert.equal(result.data.playback.status, status);
+    if (status !== 'playing') assert.equal(positionAt(result.data.playback, result.data.serverTime + 5000), 40);
+  }
+  assert.equal((await send({ sequence: 4, status: 'playing', position: 90 })).status, 409);
+  assert.equal((await send({ sequence: 6, status: 'wrong', position: 40 })).status, 400);
+  assert.equal((await send({ sequence: 6, status: 'playing', position: -1 })).status, 400);
+  assert.equal((await send({ command: 'ended', sequence: 6, position: 180 })).status, 409);
+  assert.equal((await host.call(path + '/control', { command: 'attach', songId: song.id, sessionId: 'second-player-session-0002' })).status, 409);
+  assert.equal((await guest.call(path + '/control', { command: 'progress', songId: song.id, sessionId, revision, sequence: 6, status: 'playing', position: 60 })).status, 403);
+  const publicState = (await guest.call(path)).data;
+  assert.equal(publicState.playback.sessionId, undefined); assert.equal(publicState.playback.sequence, undefined);
+  await store.updateRoom(created.data.id, room => { room.playback.reportedAt = Date.now() - 11000; });
+  assert.equal((await guest.call(path)).data.creatorConnection, 'reconnecting');
+  await store.updateRoom(created.data.id, room => { room.playback.reportedAt = Date.now() - 31000; });
+  assert.equal((await guest.call(path)).data.creatorConnection, 'disconnected');
+  const resumed = await attachPlayer(host, path, song.id, 'second-player-session-0002');
+  assert.equal((await send({ sequence: 7, status: 'playing', position: 170 })).status, 409);
+  assert.equal((await guest.call(path)).data.playback.position, 40);
+  await resumed('progress', { status: 'playing', position: 176 });
+  const ended = await resumed('ended', { position: 180 });
+  assert.equal(ended.status, 200); assert.equal(ended.data.history.length, 1);
+  assert.equal(ended.data.current.title, '다음 곡'); assert.equal(ended.data.playback.position, 0);
+  assert.equal((await resumed('ended', { position: 180 })).status, 409);
+});
+
+test('방장 퇴장은 즉시 연결 끊김을 표시하고 기존 시간 기반 방은 안전하게 대기한다', async t => {
+  const redis = emulator(), store = createRoomStore(redis.backend());
+  const base = await listen(t, http.createServer(createHandler(async () => store)));
+  const host = client(base), guest = client(base);
+  const created = await host.call('/api/rooms', { title: '퇴장과 이전 데이터', name: '방장' });
+  const path = '/api/rooms/' + created.data.id;
+  await guest.call(path + '/join', { name: '함께' });
+  const song = (await host.call(path + '/songs', { videoId: 'abcdefghijk', title: '보존할 곡' })).data.current;
+  const report = await attachPlayer(host, path, song.id);
+  await report('progress', { status: 'playing', position: 24 });
+  const left = await host.call(path + '/leave', {});
+  assert.equal(left.data.creatorConnection, 'disconnected'); assert.equal(left.data.playback.status, 'disconnected');
+  assert.equal(left.data.playback.position, 24); assert.equal(left.data.current.id, song.id);
+  await host.call(path + '/join', { name: '돌아온 방장' });
+  await store.updateRoom(created.data.id, room => { room.playback = { status: 'playing', revision: 1, startedAt: Date.now() - 999999 }; room.current.duration = 10; });
+  const migrated = await guest.call(path);
+  assert.equal(migrated.data.current.id, song.id); assert.equal(migrated.data.playback.status, 'waiting');
+  assert.equal(migrated.data.playback.position, 0); assert.equal(migrated.data.history.length, 0);
+});
+
+function playerHarness() {
+  const source = readFileSync(new URL('../public/app.js', import.meta.url), 'utf8');
+  const playerSource = source.slice(source.indexOf('function loadedVideoMatches()'), source.indexOf("for (const name of ['rules'"));
+  const messages = [], loads = [], elements = new Map();
+  const now = Date.now(); let state = 1, currentTime = 23;
+  const room = { isCreator: true, current: { id: 'song', videoId: 'abcdefghijk', duration: 180 }, playback: { position: 20, status: 'playing', reportedAt: now, revision: 2, leaseMs: 10000 } };
+  const context = {
+    URL, Date, location: { origin: 'https://sai.example.test' }, room, playerReady: true, loadedSong: 'song', claimedSong: 'song', claimedRevision: 2,
+    playbackSession: 'test-browser-session-0001', reportSequence: 0, lastPlaybackReport: 0, lastClaim: 0,
+    syncBusy: false, reportBusy: false, durationBusy: false, durationSentFor: null,
+    playbackFailure: false, unavailableSong: null, localPaused: false, localBlocked: false, internalPause: false, awaitingPlayback: false,
+    serverNow: () => Date.now(), positionAt, playbackLabel,
+    $: selector => { if (!elements.has(selector)) elements.set(selector, { textContent: '', hidden: false }); return elements.get(selector); },
+    YT: { PlayerState: { PLAYING: 1, PAUSED: 2, BUFFERING: 3, ENDED: 0 } },
+    player: {
+      getVideoUrl: () => 'https://www.youtube.com/watch?v=abcdefghijk', getCurrentTime: () => currentTime,
+      getPlayerState: () => state, getDuration: () => 180, getIframe: () => ({}), pauseVideo() {},
+      loadVideoById: video => loads.push(video), cueVideoById: video => loads.push(video),
+    },
+    request: async (action, body) => { messages.push({ action, body }); return structuredClone(context.room); },
+    accept: next => { context.room = next; }, refresh: async () => {}, stopPlayer() {},
+  };
+  runInNewContext(playerSource, context);
+  return { context, messages, loads, setState(value) { state = value; }, setPosition(value) { currentTime = value; } };
+}
+
+test('브라우저는 실제 재생·버퍼링·정지·차단 상태와 종료를 자동 보고한다', async () => {
+  const h = playerHarness(), c = h.context;
+  for (const [state, status] of [[1, 'playing'], [3, 'buffering'], [2, 'paused']]) {
+    h.setState(state); c.lastPlaybackReport = 0; await c.reportPlayback();
+    assert.equal(h.messages.at(-1).body.status, status); assert.equal(h.messages.at(-1).body.position, 23);
+  }
+  c.localBlocked = true; c.lastPlaybackReport = 0; await c.reportPlayback();
+  assert.equal(h.messages.at(-1).body.status, 'blocked');
+  c.localBlocked = false; h.setState(0); h.setPosition(180); c.lastPlaybackReport = 0; await c.reportPlayback();
+  assert.equal(h.messages.at(-1).body.command, 'ended');
+  assert.equal(h.messages.at(-1).body.songId, 'song');
+});
+
+test('브라우저 복구는 확인된 위치를 로드하고 정상 재생을 서버 추정 위치로 강제 이동하지 않는다', async () => {
+  const h = playerHarness(), c = h.context;
+  c.room.playback.position = 40;
+  await c.syncPlayer(); assert.equal(h.loads.length, 0);
+  c.playbackFailure = true; h.setPosition(95);
+  await c.reportPlayback();
+  assert.equal(h.messages.at(-1).action, undefined);
+  assert.equal(c.claimedSong, null);
+  c.request = async (action, body) => {
+    h.messages.push({ action, body });
+    return { ...c.room, playback: { ...c.room.playback, status: 'waiting', position: 40, revision: 3 } };
+  };
+  await c.syncPlayer();
+  assert.equal(h.loads.length, 1); assert.equal(h.loads[0].startSeconds, 40);
+  assert.equal(c.claimedRevision, 3); assert.equal(c.reportSequence, 0);
+  assert.equal(c.playbackFailure, false);
+  await c.reportPlayback();
+  assert.equal(h.messages.at(-1).body.position, 40); // The asynchronous load still exposes the old local playhead (95).
+  assert.equal(h.messages.at(-1).body.status, 'waiting');
+});
+
+
+test('플레이어 상태 변경 이벤트가 재생 보고와 자동 종료로 이어진다', async () => {
+  const h = playerHarness(), c = h.context;
+  const fakePlayer = c.player;
+  fakePlayer.getIframe = () => ({ setAttribute() {} });
+  fakePlayer.pauseVideo = () => { h.setState(2); events.onStateChange({ data: 2 }); };
+  let events;
+  c.player = null; c.playerReady = false; c.loadedSong = null;
+  c.loadYoutube = async () => {};
+  c.YT.Player = function (mount, options) { events = options.events; return fakePlayer; };
+  await c.syncPlayer();
+  events.onReady();
+  assert.equal(h.loads.length, 1); assert.equal(h.loads[0].startSeconds, 20);
+  for (const [state, status] of [[1, 'playing'], [3, 'buffering'], [2, 'paused']]) {
+    h.setState(state); events.onStateChange({ data: state });
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(h.messages.at(-1).body.status, status);
+  }
+  c.localPaused = false;
+  c.claimedSong = null; c.lastClaim = 0;
+  await c.syncPlayer();
+  assert.equal(c.localPaused, false); // An internal reconnect pause must not require a user click.
+  h.setState(1); events.onStateChange({ data: 1 });
+  await new Promise(resolve => setImmediate(resolve));
+  h.setPosition(180); h.setState(0); events.onStateChange({ data: 0 });
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(h.messages.at(-1).body.command, 'ended');
 });
