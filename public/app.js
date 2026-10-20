@@ -17,7 +17,8 @@ $('#theme-toggle').onclick = () => {
   try { localStorage.setItem('sai-theme', savedTheme); } catch {}
 };
 const esc = value => String(value ?? '').replace(/[&<>"']/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[char]));
-let roomId = new URLSearchParams(location.search).get('room');
+const initialRoomId = new URLSearchParams(location.search).get('room');
+let roomId = null;
 let room = null, pollBusy = false, lastSnapshot = '', searchItems = [], player = null, playerReady = false, loadedSong = null, appliedRevision = -1, youtubePromise;
 let lastHeartbeat = 0, lastRefresh = 0, serverClockOffset = 0;
 let localPaused = false, localBlocked = false, needsAlignment = false, durationSentFor = null, durationBusy = false;
@@ -76,8 +77,8 @@ function mountLandingGuide() {
   };
 }
 function notify(message) { $('#notice').textContent = message; $('#notice').classList.add('show'); clearTimeout(notify.timer); notify.timer = setTimeout(() => $('#notice').classList.remove('show'), 4500); }
-async function request(action = '', data, global = false) {
-  const path = global ? '/api/rooms' : `/api/rooms/${roomId}${action ? '/' + action : ''}`;
+async function request(action = '', data, global = false, targetRoomId = roomId) {
+  const path = global ? '/api/rooms' : `/api/rooms/${encodeURIComponent(targetRoomId)}${action ? '/' + action : ''}`;
   const sentAt = performance.now();
   const response = await fetch(path, { method: data === undefined ? 'GET' : 'POST', signal: AbortSignal.timeout(35000), headers: { 'Content-Type': 'application/json' }, ...(data === undefined ? {} : { body: JSON.stringify(data) }) });
   const result = await response.json();
@@ -91,10 +92,28 @@ function exitRoom() {
   stopPlayer(); room = null; roomId = null; lastSnapshot = ''; lastHeartbeat = 0;
   history.replaceState(null, '', '/'); document.title = '사이 — 우리 사이, 다음 한 곡'; landing();
 }
+async function enterRoom(code) {
+  if (enterRoom.busy) return;
+  enterRoom.busy = true;
+  const buttons = [$('#code-form button'), $('#create-form button')].filter(Boolean);
+  buttons.forEach(button => { button.disabled = true; });
+  try {
+    const result = await request('', undefined, false, code);
+    roomId = result.id;
+    history.replaceState(null, '', `?room=${roomId}`);
+    shell(); accept(result);
+  } catch (error) {
+    if (initialRoomId && !roomId) history.replaceState(null, '', '/');
+    notify(error.status === 404 ? '방이 없거나 비어 있어 삭제됐어요. 코드를 다시 확인해 주세요.' : error.message);
+  } finally {
+    enterRoom.busy = false;
+    buttons.forEach(button => { button.disabled = false; });
+  }
+}
 function landing() {
   disposeLandingGuide();
   // Decorative background belongs to this view and is removed when shell() renders.
-  $('#app').innerHTML = `<section class="landing"><div class="landing-copy"><div class="landing-identity"><span class="eyebrow"><span class="dot"></span> A LITTLE LESS ME, A LITTLE MORE US</span><h1>내가 고른 음악이<br>우리의 음악이 되는 <em>사이</em></h1></div><p class="app-purpose">모임에서 함께 들을 음악을 고를 때, 성격만으로 서로의 취향을 단정하지 않아요. 각자 듣고 싶은 곡을 신청하고, 투표로 다음 곡을 함께 정해요.</p><div class="feature-row"><span>↗ 유튜브 곡 신청</span><span>♡ 한 곡에 한 표</span><span>♪ 함께 듣는 플레이어</span></div></div><section class="create-card"><div class="card-top"><span class="eyebrow">YOUR NEXT LISTENING ROOM</span><span class="mini-record">◉</span></div><h2>우리만의 음악방</h2><p class="muted">링크 하나로 모이고, 한 표로 함께 골라요.</p><form id="create-form"><label>방 이름<input name="title" placeholder="예: 오후의 작업실" maxlength="60" required></label><label>내 닉네임<input name="name" placeholder="어떤 이름으로 함께할까요?" maxlength="20" required autocomplete="nickname"></label><button class="primary wide" type="submit">음악방 만들기 <span>↗</span></button></form><p class="small muted center">회원가입 없이 시작해요 · 첫 곡을 신청하면 자동으로 재생돼요</p></section></section><section class="steps"><article><span>01 / JOIN</span><h3>방 만들기 · 참여하기</h3><p>방 이름과 닉네임으로 시작하거나<br>친구의 6자리 방 코드를 입력해요.</p></article><article><span>02 / REQUEST</span><h3>듣고 싶은 곡 신청</h3><p>곡을 검색하거나 유튜브 링크로 신청해요.<br>첫 곡은 바로 시작하고 다음 곡부터 대기해요.</p></article><article><span>03 / VOTE</span><h3>다음 곡에 한 표</h3><p>대기곡에 듣고 싶어요(+1) · 이번엔 패스(−1).<br>점수가 높은 순서로, 동점이면 신청순으로 들어요.</p></article></section>`;
+  $('#app').innerHTML = `<section class="landing"><div class="landing-copy"><div class="landing-identity"><span class="eyebrow"><span class="dot"></span> A LITTLE LESS ME, A LITTLE MORE US</span><h1>내가 고른 음악이<br>우리의 음악이 되는 <em>사이</em></h1></div><p class="app-purpose">모임에서 함께 들을 음악을 고를 때, 성격만으로 서로의 취향을 단정하지 않아요. 각자 듣고 싶은 곡을 신청하고, 투표로 다음 곡을 함께 정해요.</p><div class="feature-row"><span>↗ 유튜브 곡 신청</span><span>♡ 한 곡에 한 표</span><span>♪ 함께 듣는 플레이어</span></div></div><section class="create-card"><div class="card-top"><span class="eyebrow"><span class="dot"></span> 함께 고르는 플레이리스트</span></div><h2>우리, 함께 들을까요?</h2><p class="muted">친구를 초대하고, 다음 곡을 함께 골라요.</p><form id="create-form"><label>방 이름<input name="title" placeholder="예: 오후의 작업실" maxlength="60" required></label><label>내 닉네임<input name="name" placeholder="사용할 닉네임" maxlength="20" required autocomplete="nickname"></label><button class="primary wide" type="submit">모임 만들기 <span aria-hidden="true">↗</span></button></form></section></section><section class="steps"><article><span>01 / JOIN</span><h3>방 만들기 · 참여하기</h3><p>방 이름과 닉네임으로 시작하거나<br>친구의 6자리 방 코드를 입력해요.</p></article><article><span>02 / REQUEST</span><h3>듣고 싶은 곡 신청</h3><p>곡을 검색하거나 유튜브 링크로 신청해요.<br>첫 곡은 바로 시작하고 다음 곡부터 대기해요.</p></article><article><span>03 / VOTE</span><h3>다음 곡에 한 표</h3><p>대기곡에 듣고 싶어요(+1) · 이번엔 패스(−1).<br>점수가 높은 순서로, 동점이면 신청순으로 들어요.</p></article></section>`;
   $('#app').insertAdjacentHTML('afterbegin', '<div class="landing-backdrop" aria-hidden="true"><div class="ambient-turntable"><div class="ambient-vinyl"><span class="ambient-label"></span></div></div></div>');
   $('.ambient-label').insertAdjacentHTML('beforeend', '<svg class="vinyl-lettering" viewBox="0 0 600 600" aria-hidden="true" focusable="false"><defs><path id="vinyl-label-type" d="M300 25 a275 275 0 1 1 -.01 0"/></defs><text><textPath href="#vinyl-label-type" textLength="1715" lengthAdjust="spacing">SAI / LISTEN TOGETHER · SAI / LISTEN TOGETHER · SAI / LISTEN TOGETHER · SAI / LISTEN TOGETHER · </textPath></text></svg>');
   $('#create-form').addEventListener('submit', async event => {
@@ -105,13 +124,14 @@ function landing() {
       history.replaceState(null, '', `?room=${roomId}`); shell(); accept(result);
     } catch (error) { notify(error.message); } finally { button.disabled = false; }
   });
-  $('.create-card').insertAdjacentHTML('beforeend', `<div class="join-divider">초대받으셨나요?</div><form id="code-form" class="code-form"><label>방 코드<input name="code" inputmode="numeric" pattern="[0-9]{6}" minlength="6" maxlength="6" placeholder="6자리 숫자" autocomplete="off" required></label><button class="outline">코드로 입장 ↗</button></form>`);
-  $('#code-form').onsubmit = event => { event.preventDefault(); const code = new FormData(event.target).get('code').trim(); if (/^\d{6}$/.test(code)) location.assign(`/?room=${code}`); };
+  $('.create-card').insertAdjacentHTML('beforeend', `<div class="join-divider">이미 방이 있나요?</div><form id="code-form" class="code-form"><label>방 코드<input name="code" inputmode="numeric" pattern="[0-9]{6}" minlength="6" maxlength="6" placeholder="6자리 코드" autocomplete="off" required></label><button class="outline">입장하기 ↗</button></form>`);
+  $('#code-form').onsubmit = event => { event.preventDefault(); const code = new FormData(event.target).get('code').trim(); if (/^\d{6}$/.test(code)) enterRoom(code); };
   mountLandingGuide();
 }
 function shell() {
   disposeLandingGuide();
-  $('#app').innerHTML = `<section class="room-heading"><div><span class="eyebrow"><span class="dot"></span> OUR LISTENING ROOM</span><h1 id="room-title">음악방에 연결 중…</h1><p class="muted">서로의 취향 사이에서, 함께 듣기 좋은 한 곡.</p></div><button id="invite" class="outline">초대 링크 복사 ↗</button></section><div id="connection" class="connection" role="status"></div><div class="room-grid"><section class="left-column"><article class="panel player-panel"><div class="panel-heading"><span class="eyebrow">NOW PLAYING</span><span class="badge" id="player-role"></span></div><div id="player-stage"><div id="player-placeholder" class="player-placeholder"><div class="record"><div class="record-center">sai</div></div><p>우리의 첫 곡을 기다리는 중</p><span>곡을 신청하고 함께 재생해 보세요.</span></div><div id="youtube-player"></div></div><div id="current-info"></div><p id="player-message" class="small muted" role="status"></p><div id="play-controls"></div></article><article class="panel request-panel"><div class="panel-heading"><h2>다음엔 뭐 들을까요?</h2><span class="muted small">REQUEST A SONG</span></div><div id="request-content"></div></article></section><aside class="right-column"><section class="panel queue-panel"><div class="panel-heading"><h2>함께 고른 다음 곡 <span id="queue-count" class="count">0</span></h2><span class="small muted">투표순</span></div><p class="small muted queue-help">듣고 싶어요 +1 · 이번엔 패스 −1. 점수가 높은 곡부터, 동점은 신청순으로 들어요. 첫 곡은 바로 시작하니 한 곡 더 신청해 투표해 보세요.</p><div id="queue"></div></section><section class="panel people-panel"><div class="panel-heading"><h2>함께 듣는 사람들</h2><span id="people-count" class="small muted"></span></div><div id="people"></div><p class="small muted">접속을 90초 동안 확인하지 못한 참여자는 자동으로 퇴장해요.</p></section><div class="rule-note"><span>↳</span><p>말하기 어려운 취향도, 한 표면 충분해요.<br><b>투표한 사람의 이름은 공개하지 않아요.</b></p></div></aside></div>`;
+  $('#app').innerHTML = `<section class="room-heading"><div><span class="eyebrow"><span class="dot"></span> OUR LISTENING ROOM</span><h1 id="room-title">모임에 연결 중…</h1><p class="muted">서로의 취향 사이에서, 함께 듣기 좋은 한 곡.</p></div><button id="invite" class="outline">초대 링크 복사 ↗</button></section><div id="connection" class="connection" role="status"></div><div class="room-grid"><section class="left-column"><article class="panel player-panel"><div class="panel-heading"><span class="eyebrow">NOW PLAYING</span><span class="badge" id="player-role"></span></div><div class="room-turntable" aria-hidden="true"><div class="room-vinyl"><div class="room-vinyl-label"><span>SAI</span><small>LISTEN TOGETHER</small></div></div><img class="tonearm" src="/tonearm.svg" alt="" draggable="false"></div><div id="player-stage"><div id="player-placeholder" class="player-placeholder"><div class="record"><div class="record-center">sai</div></div><p>우리의 첫 곡을 기다리는 중</p><span>곡을 신청하고 함께 재생해 보세요.</span></div><div id="youtube-player"></div></div><div id="current-info"></div><p id="player-message" class="small muted" role="status"></p><div id="play-controls"></div></article><article class="panel request-panel"><div class="panel-heading"><h2>다음엔 뭐 들을까요?</h2><span class="muted small">REQUEST A SONG</span></div><div id="request-content"></div></article></section><aside class="right-column"><section class="panel queue-panel"><div class="panel-heading"><h2>함께 고른 다음 곡 <span id="queue-count" class="count">0</span></h2><span class="small muted">투표순</span></div><p class="small muted queue-help">듣고 싶어요 +1 · 이번엔 패스 −1. 점수가 높은 곡부터, 동점은 신청순으로 들어요. 첫 곡은 바로 시작하니 한 곡 더 신청해 투표해 보세요.</p><div id="queue"></div></section><section class="panel people-panel"><div class="panel-heading"><h2>함께 듣는 사람들</h2><span id="people-count" class="small muted"></span></div><div id="people"></div><p class="small muted">접속을 90초 동안 확인하지 못한 참여자는 자동으로 퇴장해요.</p></section><div class="rule-note"><span>↳</span><p>말하기 어려운 취향도, 한 표면 충분해요.<br><b>투표한 사람의 이름은 공개하지 않아요.</b></p></div></aside></div>`;
+  $('#app').insertAdjacentHTML('afterbegin', '<div class="room-backdrop" aria-hidden="true"></div>');
   $('#invite').onclick = async () => {
     const url = new URL(location.href); url.search = `?room=${roomId}`;
     try { await navigator.clipboard.writeText(url.href); notify('초대 링크를 복사했어요. 함께 들을 사람에게 보내 주세요.'); }
@@ -138,7 +158,7 @@ function renderRoom() {
   $('#player-role').textContent = room.isCreator ? '방 생성자 · 음악 재생' : '방 생성자의 기기에서 재생 중';
   $('#queue-count').textContent = room.queue.length;
   $('#people-count').textContent = `${room.members.length}명`;
-  $('#people').innerHTML = room.members.map(m => `<span class="person"><span class="avatar">${esc(m.name.slice(0, 1))}</span>${esc(m.name)}${m.id === room.me?.id ? '<small>나</small>' : ''}</span>`).join('');
+  $('#people').innerHTML = room.members.map(m => `<span class="person"><span class="avatar">${m.id === room.me?.id ? '나' : esc(m.name.slice(0, 1))}</span>${esc(m.name)}</span>`).join('');
   const song = room.current;
   $('#current-info').innerHTML = song ? `<div class="playing-label"><span class="equalizer">ııı</span>${room.playback.status === 'paused' ? '잠시 쉬는 중' : '함께 듣는 중'}</div><h2>${esc(song.title)}</h2><p class="muted">${esc(song.artist || 'YouTube')} <span class="separator">/</span> ${esc(song.addedByName)} 님의 신청곡</p><a class="external small" href="https://www.youtube.com/watch?v=${song.videoId}" target="_blank" rel="noopener">YouTube에서 보기 ↗</a>` : '<h2>첫 곡은 어떤 음악일까요?</h2><p class="muted">아래에서 듣고 싶은 곡을 신청해 주세요.</p>';
   if (!room.isCreator) {
@@ -282,6 +302,7 @@ async function heartbeat() {
   catch (error) { if (error.status === 404) { exitRoom(); notify('참여자가 없어 방이 자동 삭제됐어요.'); } else if (error.status === 401) { await refresh(); } else if ($('#connection')) $('#connection').textContent = error.message; }
   finally { heartbeat.busy = false; }
 }
-if (roomId) { shell(); refresh(); } else landing();
+landing();
+if (initialRoomId) enterRoom(initialRoomId);
 setInterval(() => { if (Date.now() - lastRefresh >= 5000) refresh(); heartbeat(); reportDuration(); renderLocalPlayback(); }, 1000);
 document.addEventListener('visibilitychange', () => { if (!document.hidden) { needsAlignment = true; refresh(); } });

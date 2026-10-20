@@ -4,6 +4,7 @@ import http from 'node:http';
 import { mkdtempSync, rmSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { runInNewContext } from 'node:vm';
 import { queue, refreshPresence, advance, settlePlayback } from '../room.js';
 import { positionAt, playablePosition } from '../public/session.js';
 import { createHandler, videoId } from '../lib/handler.js';
@@ -48,6 +49,43 @@ function emulator() {
   return { commands, records, tick(ms) { clock += ms; }, get conflicts() { return conflicts; }, backend() { return createRedisBackend({ url: 'https://redis.example.test', token: 'test-private-token', prefix: 'test:production', fetchImpl }); } };
 }
 
+test('방 확인이 성공해야 화면과 URL을 전환하고 실패하면 입장 화면을 유지한다', async () => {
+  const source = readFileSync(new URL('../public/app.js', import.meta.url), 'utf8');
+  const enterSource = source.slice(source.indexOf('async function enterRoom(code)'), source.indexOf('\nfunction landing()'));
+  for (const outcome of ['success', 'missing', 'network']) {
+    const buttons = [{ disabled: false }, { disabled: false }];
+    const events = [];
+    let resolve, reject;
+    const pending = new Promise((yes, no) => { resolve = yes; reject = no; });
+    const context = {
+      roomId: null, initialRoomId: null,
+      $: selector => selector === '#code-form button' ? buttons[0] : buttons[1],
+      request: (...args) => { events.push(['request', ...args]); return pending; },
+      history: { replaceState: (...args) => events.push(['url', args[2]]) },
+      shell: () => events.push(['shell']), accept: result => events.push(['accept', result.id]),
+      notify: message => events.push(['notice', message]),
+    };
+    runInNewContext(enterSource, context);
+    const entering = context.enterRoom('123456');
+    await context.enterRoom('654321'); // Ignore repeated submissions during verification.
+    assert.equal(context.roomId, null);
+    assert.deepEqual(events, [['request', '', undefined, false, '123456']]);
+    assert.ok(buttons.every(button => button.disabled));
+    if (outcome === 'success') resolve({ id: '123456' });
+    else reject(Object.assign(new Error('연결 실패'), { status: outcome === 'missing' ? 404 : 503 }));
+    await entering;
+    assert.ok(buttons.every(button => !button.disabled));
+    assert.equal(context.enterRoom.busy, false);
+    if (outcome === 'success') {
+      assert.equal(context.roomId, '123456');
+      assert.deepEqual(events.slice(1), [['url', '?room=123456'], ['shell'], ['accept', '123456']]);
+    } else {
+      assert.equal(context.roomId, null);
+      assert.deepEqual(events.slice(1), [['notice', outcome === 'missing' ? '방이 없거나 비어 있어 삭제됐어요. 코드를 다시 확인해 주세요.' : '연결 실패']]);
+    }
+  }
+});
+
 test('신청자가 같아도 점수를 우선하고 동점은 등록순으로 정렬한다', () => {
   const room = { members: [{ id: 'one' }, { id: 'two' }], votes: { one: { a: 1, b: 1 }, two: { c: -1 } }, songs: [{ id: 'a', addedBy: 'one', createdAt: 1 }, { id: 'b', addedBy: 'one', createdAt: 2 }, { id: 'c', addedBy: 'two', createdAt: 3 }], lastRequester: null };
   assert.deepEqual(queue(room).map(s => s.id), ['a', 'b', 'c']);
@@ -60,6 +98,10 @@ test('로컬: 6자리 코드·즉시 재생·한 표·과반 전환·퇴장 삭�
   for (const key of ['YOUTUBE_API_KEY', 'VERCEL', 'UPSTASH_REDIS_REST_URL', 'UPSTASH_REDIS_REST_TOKEN', 'KV_REST_API_URL', 'KV_REST_API_TOKEN']) delete process.env[key];
   const { server } = await import('../dev-server.js');
   const base = await listen(t, server);
+  const tonearm = await fetch(base + '/tonearm.svg');
+  assert.equal(tonearm.status, 200);
+  assert.match(tonearm.headers.get('content-type'), /^image\/svg\+xml/);
+  assert.equal(await tonearm.text(), readFileSync(new URL('../public/tonearm.svg', import.meta.url), 'utf8'));
   t.after(() => rmSync(dir, { recursive: true, force: true }));
   const host = client(base), a = client(base), b = client(base), stranger = client(base);
   const created = await host.call('/api/rooms', { title: '오후의 작업실', name: '재생 기기' });

@@ -148,3 +148,96 @@ body:has(.is-scene-pinned) .site-header{position:sticky;top:0;z-index:3}
   .landing-guide footer{padding:12px 20px;font-size:11px}
   .landing-guide footer .quiet{font-size:11px}
 }
+
+/* Room entry card */
+.create-card{position:relative;border-radius:24px;border-color:#65537d;background:radial-gradient(ellipse at 100% 0,#8060b52b,transparent 60%),linear-gradient(155deg,#292435,#1b1c26 80%);box-shadow:0 24px 70px #0003,inset 0 1px #e7d5ff1c;padding:30px}
+.create-card .card-top{min-height:36px;margin-bottom:20px}
+.create-card .card-top .eyebrow{font-size:11px;letter-spacing:.6px}
+.create-card h2{font-size:clamp(22px,2.1vw,27px);line-height:1.4;letter-spacing:-1px;margin:0 0 10px;text-wrap:balance}
+.create-card>.muted{font-size:13px;line-height:1.8}
+.create-card #create-form{margin-top:26px}
+.create-card input{background:#12131bcc;border-color:#454052;transition:border-color .18s,box-shadow .18s}
+.create-card input:focus{border-color:var(--accent);outline:2px solid #c0b2ff30;outline-offset:2px;box-shadow:0 0 20px #b29af710}
+.create-card #create-form .primary{min-height:52px;margin-top:24px;background:linear-gradient(110deg,#d3c3ff,#b6a0f5);box-shadow:0 6px 22px #9d7feb26;color:#261d3e;border:1px solid #e8deff55;font-size:14px}
+.create-card #create-form .primary:hover{background:linear-gradient(110deg,#e0d3ff,#c7b3ff);box-shadow:0 8px 26px #9d7feb40}
+.create-card #create-form .primary span{display:grid;place-items:center;width:28px;height:28px;border-radius:50%;background:#30204615;font-size:18px}
+.create-card .join-divider{margin:28px 0 16px;font-size:12px}
+.create-card .code-form{padding:16px;background:#0c0e141f;border:1px solid #bba7de24;border-radius:14px;gap:10px}
+.create-card .code-form label{font-size:12px}
+.create-card .code-form input{letter-spacing:1px}
+.create-card .code-form button{min-height:48px;background:#c0b2ff10;border-color:#c0b2ff45;color:var(--accent);padding:12px}
+.create-card .code-form button:hover{background:#c0b2ff23;border-color:var(--accent)}
+[data-theme=light] .create-card{background:radial-gradient(ellipse at 100% 0,#d1b8f33b,transparent 65%),#fffdf8;border-color:#c4afd9}
+[data-theme=light] .create-card input{background:#fffefa;border-color:#c8bed5}
+[data-theme=light] .create-card .code-form{background:#7851a708;border-color:#7851a724}
+[data-theme=light] .create-card .code-form button{color:var(--accent);background:#7851a70a;border-color:#7851a740}
+@media(max-width:700px){.create-card,[data-theme=light] .create-card{padding:22px;border-radius:20px}.create-card h2{font-size:24px}.create-card .card-top{margin-bottom:18px}.create-card .code-form{padding:12px;gap:8px}.create-card .code-form button{padding:12px 10px}}
+
+/* The listening room continues the landing page's vinyl and color palette. */
+.room-backdrop{position:fixed;inset:0;z-index:-1;overflow:hidden;pointer-events:none;background:var(--bg)}
+.room-backdrop .ambient-turntable{left:18%;top:26%;width:max(125vw,1100px);opacity:.38;filter:blur(1px)}
+.room-backdrop::after{content:"";position:absolute;inset:0;background:linear-gradient(90deg,#12131a80,#12131aa8),linear-gradient(0deg,var(--bg),transparent 80%)}
+body:has(.room-heading) .site-header{border-bottom-color:#c0b2ff26}
+.room-heading{padding:28px 30px;margin:30px 0 24px;border:1px solid #b4a0d138;border-radius:24px;background:linear-gradient(110deg,#302637c9,#17332ca6);box-shadow:inset 0 1px #ffffff0a,0 18px 50px #00000015}
+.room-heading h1{font-size:clamp(28px,3vw,38px);letter-spacing:-1px}
+.room-heading .muted{color:#c4bed2}
+.room-heading>.outline,.room-tools>.outline{border-color:#bca7de55;background:#19192185;border-radius:12px}
+.room-heading>.outline:hover,.room-tools>.outline:hover{background:#c0b2ff20}
+.room-grid .panel{border-color:#75618c66;border-radius:22px;background:radial-gradient(ellipse at 100% 0,#8060b51c,transparent 65%),linear-gradient(150deg,#282434f5,#1b1c26f5);box-shadow:inset 0 1px #e7d5ff12,0 18px 50px #0002}
+.room-grid .panel-heading{padding-bottom:14px;border-bottom:1px solid #bba7de26}
+.room-grid .panel-heading h2{font-size:18px}
+.room-grid .player-panel{border-color:#a38ac780}
+.room-grid #player-stage{border:1px solid #bba7de24;border-radius:16px}
+.room-grid .player-placeholder{background:radial-gradient(ellipse at 20% 0,#7d478344,transparent 65%),radial-gradient(ellipse at 90% 100%,#1a684f44,transparent 65%),#14171e}
+.room-grid .record{width:132px;height:132px;border-color:#6b8a7966;background:repeating-radial-gradient(circle,transparent 0 3px,#a2b7ad20 4px,transparent 5px 7px),conic-gradient(from 30deg,#182c25,#3f324d,#163a2b,#283c42,#182c25);box-shadow:0 12px 35px #0005,0 0 0 5px #acc3ac08}
+.room-grid .record-center{width:45px;height:45px;background:#c4b1ee;color:#30273e}
+.room-grid .primary{background:linear-gradient(110deg,#d3c3ff,#b6a0f5);color:#261d3e;box-shadow:0 5px 18px #9d7feb1c;border-radius:12px}
+.room-grid .primary:hover{background:linear-gradient(110deg,#e0d3ff,#c7b3ff)}
+.room-grid input{border-color:#4b405b;background:#12131bcc}
+.room-grid input:focus{border-color:var(--accent);outline:2px solid #c0b2ff30;outline-offset:2px}
+.room-grid .empty-queue>span{border-radius:50%;background:#c0b2ff16;border:1px solid #c0b2ff30;color:var(--accent)}
+.room-grid .person{background:#c0b2ff0d;border:1px solid #c0b2ff24;border-radius:999px;padding:5px 10px 5px 5px}
+body:has(.room-heading) footer{border-top-color:#c0b2ff26;color:var(--muted)}
+[data-theme=light] .room-backdrop .ambient-turntable{opacity:.19}
+[data-theme=light] .room-backdrop::after{background:linear-gradient(90deg,#f5f3ed88,#f5f3edbb),linear-gradient(0deg,var(--bg),transparent 80%)}
+[data-theme=light] .room-heading{background:linear-gradient(110deg,#f1e8f9ed,#e4efe8ed);border-color:#c4afd9}
+[data-theme=light] .room-heading .muted{color:var(--muted)}
+[data-theme=light] .room-heading .outline{background:#fffdf8b3;border-color:#c4afd9}
+[data-theme=light] .room-grid .panel{background:radial-gradient(ellipse at 100% 0,#d1b8f326,transparent 65%),#fffdf8f5;border-color:#c4afd9;box-shadow:0 18px 50px #45334e0a}
+[data-theme=light] .room-grid .panel-heading{border-bottom-color:#c4afd950}
+[data-theme=light] .room-grid input{background:#fffefa;border-color:#c8bed5}
+@media(max-width:700px){.room-backdrop .ambient-turntable{width:1000px;left:0;top:100px;opacity:.24}.room-heading{padding:22px 20px;margin:22px 0 20px;border-radius:20px;gap:16px}.room-heading h1{font-size:28px}.room-heading>.outline{margin-top:0}.room-grid .panel{border-radius:20px}.room-grid .panel-heading h2{font-size:17px}.room-grid .record{width:104px;height:104px}}
+
+/* A central turntable, with people and requests on the left and queue on the right. */
+body:has(.room-heading) main{max-width:1480px}
+.room-grid{grid-template-columns:minmax(220px,.85fr) minmax(340px,1.65fr) minmax(250px,1fr);grid-template-areas:"people player queue" "request player queue" "note player queue";gap:22px;align-items:start}
+.room-grid .left-column,.room-grid .right-column{display:contents}
+.room-grid .player-panel{grid-area:player;min-width:0;padding:20px;background:transparent;border-color:transparent;box-shadow:none}
+.room-grid .people-panel{grid-area:people}
+.room-grid .request-panel{grid-area:request}
+.room-grid .queue-panel{grid-area:queue;min-height:480px}
+.room-grid .rule-note{grid-area:note;margin:0 8px}
+.room-grid .panel-heading{flex-wrap:wrap;gap:8px}
+.room-grid .request-panel .search-form{flex-wrap:wrap}
+.room-grid .request-panel .search-form input{min-width:0;flex:1 1 120px}
+.room-grid .request-panel .two-inputs{grid-template-columns:1fr}
+.room-grid .song-row{grid-template-columns:auto minmax(0,1fr);gap:10px}
+.room-grid .song-row .song-rank{display:none}
+.room-grid .song-detail{min-width:0}
+.room-grid .vote-actions{flex-wrap:wrap}
+.room-turntable{position:relative;aspect-ratio:1.08;margin:12px 0 16px;display:grid;place-items:center;isolation:isolate}
+.room-vinyl{width:90%;aspect-ratio:1;border-radius:50%;position:relative;display:grid;place-items:center;border:7px solid #101d18;background:repeating-radial-gradient(circle,transparent 0 3px,#b0d3bf1c 4px,transparent 5px 7px),conic-gradient(from 25deg,#14271f,#3b2b49 18%,#172b28 35%,#244937 51%,#14251f 68%,#37444c 82%,#14271f);box-shadow:0 0 0 1px #76978066,0 0 0 6px #09130e66,0 25px 60px #0005,inset 0 0 40px #0007}
+.room-vinyl::after{content:"";position:absolute;inset:0;border-radius:inherit;background:conic-gradient(from -35deg,transparent 0deg,#f0edff20 28deg,transparent 48deg,transparent 185deg,#f0edff15 210deg,transparent 230deg);pointer-events:none}
+.room-vinyl-label{width:34%;aspect-ratio:1;border-radius:50%;background:radial-gradient(circle,#101d18 0 4%,#829f88 4.5% 6%,transparent 6.5%),linear-gradient(145deg,#807097,#b5a2cc);box-shadow:0 0 0 7px #111e17,0 0 0 8px #91b69c50;display:flex;flex-direction:column;align-items:center;justify-content:space-between;padding:18% 0;color:#251f30}
+.room-vinyl-label span{position:absolute;top:38%;font-size:clamp(18px,2vw,28px);font-weight:800;letter-spacing:4px}
+.room-vinyl-label small{position:absolute;bottom:38%;font-size:7px;letter-spacing:1px}
+.room-grid .player-placeholder .record{display:none}
+.room-grid #player-stage:has(.player-placeholder:not([hidden])){aspect-ratio:auto;min-height:82px;background:transparent;border:0;overflow:visible}
+.room-grid .player-placeholder{padding:12px;text-align:center;background:transparent}
+.room-grid #current-info{text-align:center;margin-top:18px}
+.room-grid #current-info h2{font-size:22px}
+[data-theme=light] .room-grid .player-panel{background:transparent;border-color:transparent;box-shadow:none}
+@media(min-width:701px) and (max-width:1100px){.room-grid{grid-template-columns:minmax(0,1.3fr) minmax(250px,1fr);grid-template-areas:"player people" "player request" "queue queue" "note note"}.room-grid .queue-panel{min-height:260px}}
+@media(max-width:700px){.room-grid{grid-template-columns:minmax(0,1fr);grid-template-areas:"player" "request" "queue" "people" "note";gap:18px}.room-grid .player-panel{padding:0 4px}.room-turntable{max-width:420px;width:100%;margin:0 auto 12px}.room-grid .queue-panel{min-height:280px}.room-vinyl-label span{font-size:24px}}
+
+.tonearm{position:absolute;right:-3%;top:-3%;width:43%;height:91%;object-fit:contain;pointer-events:none;user-select:none;z-index:2}
