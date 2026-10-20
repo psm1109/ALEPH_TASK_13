@@ -124,7 +124,7 @@ function landing() {
       history.replaceState(null, '', `?room=${roomId}`); shell(); accept(result);
     } catch (error) { notify(error.message); } finally { button.disabled = false; }
   });
-  $('.create-card').insertAdjacentHTML('beforeend', `<div class="join-divider">이미 방이 있나요?</div><form id="code-form" class="code-form"><label>방 코드<input name="code" inputmode="numeric" pattern="[0-9]{6}" minlength="6" maxlength="6" placeholder="6자리 코드" autocomplete="off" required></label><button class="outline">입장하기 ↗</button></form>`);
+  $('.create-card').insertAdjacentHTML('beforeend', `<div class="join-divider">초대받으셨나요?</div><form id="code-form" class="code-form"><label>방 코드<input name="code" inputmode="numeric" pattern="[0-9]{6}" minlength="6" maxlength="6" placeholder="6자리 숫자" autocomplete="off" required></label><button class="outline">코드로 입장 ↗</button></form>`);
   $('#code-form').onsubmit = event => { event.preventDefault(); const code = new FormData(event.target).get('code').trim(); if (/^\d{6}$/.test(code)) enterRoom(code); };
   mountLandingGuide();
 }
