@@ -398,7 +398,7 @@ test('재생 보고는 상태를 보존하고 오래된 순서·다른 탭·이�
   const attached = await host.call(path + '/control', { command: 'attach', songId: song.id, sessionId });
   const revision = attached.data.playback.revision;
   const send = details => host.call(path + '/control', { command: 'progress', songId: song.id, sessionId, revision, ...details });
-  for (const [i, status] of ['playing', 'buffering', 'paused', 'blocked', 'waiting'].entries()) {
+  for (const [i, status] of ['playing', 'buffering', 'blocked', 'waiting', 'paused'].entries()) {
     const result = await send({ sequence: i + 1, status, position: 40 });
     assert.equal(result.status, 200); assert.equal(result.data.playback.status, status);
     if (status !== 'playing') assert.equal(positionAt(result.data.playback, result.data.serverTime + 5000), 40);
@@ -418,6 +418,7 @@ test('재생 보고는 상태를 보존하고 오래된 순서·다른 탭·이�
   const resumed = await attachPlayer(host, path, song.id, 'second-player-session-0002');
   assert.equal((await send({ sequence: 7, status: 'playing', position: 170 })).status, 409);
   assert.equal((await guest.call(path)).data.playback.position, 40);
+  await resumed('resume');
   await resumed('progress', { status: 'playing', position: 176 });
   const ended = await resumed('ended', { position: 180 });
   assert.equal(ended.status, 200); assert.equal(ended.data.history.length, 1);
@@ -455,9 +456,9 @@ function playerHarness() {
     URL, Date, location: { origin: 'https://sai.example.test' }, room, playerReady: true, loadedSong: 'song', claimedSong: 'song', claimedRevision: 2,
     playbackSession: 'test-browser-session-0001', reportSequence: 0, lastPlaybackReport: 0, lastClaim: 0,
     syncBusy: false, reportBusy: false, durationBusy: false, durationSentFor: null,
-    playbackFailure: false, unavailableSong: null, localPaused: false, localBlocked: false, internalPause: false, awaitingPlayback: false,
+    pendingControl: null, playbackFailure: false, unavailableSong: null, localPaused: false, localBlocked: false, internalPause: false, awaitingPlayback: false,
     serverNow: () => Date.now(), positionAt, playbackLabel,
-    $: selector => { if (!elements.has(selector)) elements.set(selector, { textContent: '', hidden: false }); return elements.get(selector); },
+    $: selector => { if (!elements.has(selector)) elements.set(selector, { textContent: '', hidden: false, classList: { toggle() {}, remove() {} } }); return elements.get(selector); },
     YT: { PlayerState: { PLAYING: 1, PAUSED: 2, BUFFERING: 3, ENDED: 0 } },
     player: {
       getVideoUrl: () => 'https://www.youtube.com/watch?v=abcdefghijk', getCurrentTime: () => currentTime,
@@ -532,4 +533,88 @@ test('플레이어 상태 변경 이벤트가 재생 보고와 자동 종료로 
   h.setPosition(180); h.setState(0); events.onStateChange({ data: 0 });
   await new Promise(resolve => setImmediate(resolve));
   assert.equal(h.messages.at(-1).body.command, 'ended');
+});
+
+
+test('병합: 방장 전용 일시정지·재개는 실제 재생 확인까지 시간을 진행하지 않는다', async t => {
+  const redis = emulator(), store = createRoomStore(redis.backend());
+  const base = await listen(t, http.createServer(createHandler(async () => store)));
+  const host = client(base), guest = client(base);
+  const created = await host.call('/api/rooms', { title: '멈춘 레코드', name: '방장' });
+  const path = '/api/rooms/' + created.data.id;
+  await guest.call(path + '/join', { name: '참여자' });
+  const song = (await host.call(path + '/songs', { videoId: 'abcdefghijk', title: '현재 곡' })).data.current;
+  await host.call(path + '/songs', { videoId: 'lmnopqrstuv', title: '대기곡' });
+  await host.call(path + '/control', { command: 'duration', songId: song.id, duration: 180 });
+  const report = await attachPlayer(host, path, song.id);
+  for (const position of [-1, '45', 181]) assert.equal((await report('pause', { position })).status, 400);
+  const paused = await report('pause', { position: 45.5 });
+  assert.equal(paused.status, 200); assert.equal(paused.data.playback.status, 'paused');
+  assert.equal(paused.data.playback.paused, true);
+  assert.equal(positionAt(paused.data.playback, paused.data.serverTime + 3600000), 45.5);
+  assert.equal((await report('pause', { position: 0 })).data.playback.position, 45.5);
+  assert.equal((await report('progress', { status: 'playing', position: 95 })).data.playback.position, 45.5);
+  assert.equal((await guest.call(path + '/control', { command: 'resume', songId: song.id })).status, 403);
+  assert.equal((await guest.call(path + '/heartbeat', {})).data.playback.position, 45.5);
+  const frozen = structuredClone(await store.getRoom(created.data.id));
+  settlePlayback(frozen, paused.data.serverTime + 3600000);
+  assert.equal(frozen.current.id, song.id); assert.equal(frozen.playback.position, 45.5);
+  // Reopening the host tab keeps the durable pause after its former lease expires.
+  await store.updateRoom(created.data.id, room => { room.playback.reportedAt = Date.now() - 11000; });
+  const reattached = await attachPlayer(host, path, song.id, 'reopened-browser-session-0002');
+  const refreshed = (await host.call(path)).data;
+  assert.equal(refreshed.playback.status, 'paused'); assert.equal(refreshed.playback.position, 45.5);
+  const resumed = await reattached('resume');
+  assert.equal(resumed.data.playback.status, 'waiting'); assert.equal(resumed.data.playback.position, 45.5);
+  assert.equal(positionAt(resumed.data.playback, resumed.data.serverTime + 5000), 45.5);
+  const playing = await reattached('progress', { status: 'playing', position: 46 });
+  assert.equal(playing.data.playback.status, 'playing'); assert.equal(playing.data.current.id, song.id);
+  assert.equal(playing.data.queue.length, 1);
+});
+
+test('병합: 일시정지 중 과반 건너뛰기는 다음 곡의 처음에서 멈춘 상태를 유지한다', async t => {
+  const redis = emulator(), store = createRoomStore(redis.backend());
+  const base = await listen(t, http.createServer(createHandler(async () => store)));
+  const host = client(base), guest = client(base);
+  const created = await host.call('/api/rooms', { title: '멈춘 채 건너뛰기', name: '방장' });
+  const path = '/api/rooms/' + created.data.id;
+  await guest.call(path + '/join', { name: '참여자' });
+  const song = (await host.call(path + '/songs', { videoId: 'abcdefghijk', title: '현재 곡' })).data.current;
+  const next = (await guest.call(path + '/songs', { videoId: 'lmnopqrstuv', title: '다음 곡' })).data.queue[0];
+  const report = await attachPlayer(host, path, song.id);
+  await report('pause', { position: 45.5 });
+  assert.equal((await host.call(path + '/skip', { songId: song.id, value: true })).data.current.id, song.id);
+  const skipped = await guest.call(path + '/skip', { songId: song.id, value: true });
+  assert.equal(skipped.status, 200); assert.equal(skipped.data.current.id, next.id);
+  assert.equal(skipped.data.playback.status, 'paused'); assert.equal(skipped.data.playback.position, 0);
+  assert.equal(skipped.data.playback.paused, true);
+  assert.equal(positionAt(skipped.data.playback, skipped.data.serverTime + 3600000), 0);
+  const nextReport = await attachPlayer(host, path, next.id);
+  assert.equal((await host.call(path)).data.playback.status, 'paused');
+  assert.equal((await nextReport('resume')).data.playback.position, 0);
+  await nextReport('progress', { status: 'playing', position: 0.1 });
+  await nextReport('pause', { position: 2 });
+  await host.call(path + '/skip', { songId: next.id, value: true });
+  const empty = await guest.call(path + '/skip', { songId: next.id, value: true });
+  assert.equal(empty.data.current, null); assert.equal(empty.data.playback.status, 'idle');
+});
+
+test('병합: 재생 버튼은 확인 위치를 지키고 정지 버튼은 직렬 보고로 저장한다', async () => {
+  const h = playerHarness(), c = h.context;
+  c.player.playVideo = () => {};
+  c.controlPlayback('pause');
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(c.localPaused, true);
+  assert.equal(h.messages.at(-1).body.command, 'pause');
+  assert.equal(h.messages.at(-1).body.position, 23);
+  c.room.playback.paused = true; c.room.playback.status = 'paused';
+  c.controlPlayback('resume');
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(c.localPaused, false);
+  assert.equal(h.messages.at(-1).body.command, 'resume');
+  assert.equal(h.loads.length, 0);
+  c.room.isCreator = false;
+  const count = h.messages.length;
+  c.controlPlayback('pause');
+  assert.equal(h.messages.length, count);
 });

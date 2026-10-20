@@ -228,7 +228,7 @@ body:has(.room-heading) main{max-width:1480px}
 .room-turntable{position:relative;aspect-ratio:1.08;margin:12px 0 16px;display:grid;place-items:center;isolation:isolate}
 .room-vinyl{width:90%;aspect-ratio:1;border-radius:50%;position:relative;display:grid;place-items:center;border:7px solid #101d18;background:repeating-radial-gradient(circle,transparent 0 3px,#b0d3bf1c 4px,transparent 5px 7px),conic-gradient(from 25deg,#14271f,#3b2b49 18%,#172b28 35%,#244937 51%,#14251f 68%,#37444c 82%,#14271f);box-shadow:0 0 0 1px #76978066,0 0 0 6px #09130e66,0 25px 60px #0005,inset 0 0 40px #0007}
 .room-vinyl::after{content:"";position:absolute;inset:0;border-radius:inherit;background:conic-gradient(from -35deg,transparent 0deg,#f0edff20 28deg,transparent 48deg,transparent 185deg,#f0edff15 210deg,transparent 230deg);pointer-events:none}
-.room-vinyl-label{width:34%;aspect-ratio:1;border-radius:50%;background:radial-gradient(circle,#101d18 0 4%,#829f88 4.5% 6%,transparent 6.5%),linear-gradient(145deg,#807097,#b5a2cc);box-shadow:0 0 0 7px #111e17,0 0 0 8px #91b69c50;display:flex;flex-direction:column;align-items:center;justify-content:space-between;padding:18% 0;color:#251f30}
+.room-vinyl-label{width:34%;aspect-ratio:1;border-radius:50%;background:radial-gradient(circle,#101d18 0 4%,#829f88 4.5% 6%,transparent 6.5%),linear-gradient(145deg,#807097,#b5a2cc);box-shadow:0 0 0 7px #111e17,0 0 0 8px #91b69c50;display:flex;flex-direction:column;align-items:center;justify-content:space-between;padding:0;color:#251f30}
 .room-vinyl-label span{position:absolute;top:38%;font-size:clamp(18px,2vw,28px);font-weight:800;letter-spacing:4px}
 .room-vinyl-label small{position:absolute;bottom:38%;font-size:7px;letter-spacing:1px}
 .room-grid .player-placeholder .record{display:none}
@@ -241,3 +241,17 @@ body:has(.room-heading) main{max-width:1480px}
 @media(max-width:700px){.room-grid{grid-template-columns:minmax(0,1fr);grid-template-areas:"player" "request" "queue" "people" "note";gap:18px}.room-grid .player-panel{padding:0 4px}.room-turntable{max-width:420px;width:100%;margin:0 auto 12px}.room-grid .queue-panel{min-height:280px}.room-vinyl-label span{font-size:24px}}
 
 .tonearm{position:absolute;right:-3%;top:-3%;width:43%;height:91%;object-fit:contain;pointer-events:none;user-select:none;z-index:2}
+
+/* The disc rotates beneath a stationary video in its centre. */
+.room-vinyl{animation:room-vinyl-spin 18s linear infinite;animation-play-state:paused}
+.room-turntable.is-playing .room-vinyl{animation-play-state:running}
+@keyframes room-vinyl-spin{to{transform:rotate(360deg)}}
+/* Match 34% of the disc's inner width: (90% of the turntable - 14px border) * .34. */
+.room-grid .room-turntable #player-stage{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);width:calc(30.6% - 4.76px);aspect-ratio:1;border:0;border-radius:50%;overflow:hidden;background:#11121a;box-shadow:0 0 0 7px #111e17,0 0 0 8px #91b69c50;z-index:3}
+.room-turntable #youtube-player{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);width:178%;height:100%}
+.has-video .room-vinyl-label{visibility:hidden}
+@media(prefers-reduced-motion:reduce){.room-vinyl{animation:none}}
+
+.room-turntable #player-stage{pointer-events:none}
+.transport-controls{display:flex;justify-content:center;gap:12px;margin:0 auto 16px}
+.transport-controls button{min-width:100px}

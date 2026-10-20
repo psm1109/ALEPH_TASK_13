@@ -10,6 +10,7 @@ export function queue(room) {
 export const PLAYBACK_LEASE_MS = 10000;
 
 export function advance(room) {
+  const paused = Boolean(room.playback.paused || room.playback.status === 'paused');
   if (room.current) {
     room.history.push(room.current);
     room.history = room.history.slice(-30);
@@ -21,14 +22,14 @@ export function advance(room) {
   }
   room.skipVotes = {};
   room.unavailable = {};
-  room.playback = { status: room.current ? 'waiting' : 'idle', revision: room.playback.revision + 1, position: 0, reportedAt: null, startedAt: null, leaseMs: PLAYBACK_LEASE_MS };
+  room.playback = { status: room.current ? (paused ? 'paused' : 'waiting') : 'idle', paused: Boolean(room.current && paused), revision: room.playback.revision + 1, position: 0, reportedAt: null, startedAt: null, leaseMs: PLAYBACK_LEASE_MS };
 }
 
 // Expire a playback lease without advancing the track or guessing unheard progress.
 export function settlePlayback(room, now = Date.now()) {
   const playback = room.playback;
-  if (!Number.isFinite(playback.position)) {
-    room.playback = { status: room.current ? 'waiting' : 'idle', revision: playback.revision + 1, position: 0, reportedAt: null, startedAt: null, leaseMs: PLAYBACK_LEASE_MS };
+  if (!Number.isFinite(playback.position) || !Number.isFinite(playback.leaseMs)) {
+    room.playback = { status: room.current ? (playback.status === 'paused' ? 'paused' : 'waiting') : 'idle', paused: playback.status === 'paused', revision: playback.revision + 1, position: Math.max(0, playback.position || 0), reportedAt: null, startedAt: null, leaseMs: PLAYBACK_LEASE_MS };
     return true;
   }
   const creatorPresent = room.members.some(member => member.device === room.creatorDevice && now - member.lastSeen < 90000);
