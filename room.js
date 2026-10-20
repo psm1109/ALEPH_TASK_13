@@ -8,6 +8,7 @@ export function queue(room) {
   return [...room.songs].sort((a, b) => voteCounts(room, b.id).score - voteCounts(room, a.id).score || a.createdAt - b.createdAt || a.id.localeCompare(b.id));
 }
 export function advance(room, startedAt = Date.now()) {
+  const paused = room.playback.status === 'paused';
   if (room.current) {
     room.history.push(room.current);
     room.history = room.history.slice(-30);
@@ -19,7 +20,7 @@ export function advance(room, startedAt = Date.now()) {
   }
   room.skipVotes = {};
   room.unavailable = {};
-  room.playback = { status: room.current ? 'playing' : 'idle', revision: room.playback.revision + 1, startedAt: room.current ? startedAt : null };
+  room.playback = { status: room.current ? (paused ? 'paused' : 'playing') : 'idle', revision: room.playback.revision + 1, startedAt: room.current && !paused ? startedAt : null, ...(room.current && paused ? { position: 0 } : {}) };
 }
 
 export function playbackDue(room, now = Date.now()) {

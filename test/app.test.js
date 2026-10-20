@@ -372,6 +372,40 @@ test('방 생성자만 재생을 담당하고 퇴장 후에도 권한을 넘기�
   assert.ok(!JSON.stringify((await guest.call(path)).data).includes('creatorDevice'));
 });
 
+test('일시정지 중 과반 건너뛰기는 다음 곡의 시작에서 멈추고 재생 시 처음부터 시작한다', async t => {
+  const redis = emulator(), store = createRoomStore(redis.backend());
+  const base = await listen(t, http.createServer(createHandler(async () => store)));
+  const host = client(base), guest = client(base);
+  const created = await host.call('/api/rooms', { title: '멈춘 채 건너뛰기', name: '방장' });
+  const path = '/api/rooms/' + created.data.id;
+  await guest.call(path + '/join', { name: '참여자' });
+  const song = (await host.call(path + '/songs', { videoId: 'abcdefghijk', title: '현재 곡' })).data.current;
+  const next = (await guest.call(path + '/songs', { videoId: 'lmnopqrstuv', title: '다음 곡' })).data.queue[0];
+  const paused = (await host.call(path + '/control', { command: 'pause', songId: song.id, position: 45.5 })).data;
+  const minority = await host.call(path + '/skip', { songId: song.id, value: true });
+  assert.equal(minority.data.current.id, song.id);
+  assert.deepEqual(minority.data.playback, paused.playback);
+  const skipped = await guest.call(path + '/skip', { songId: song.id, value: true });
+  assert.equal(skipped.status, 200);
+  assert.equal(skipped.data.current.id, next.id);
+  assert.equal(skipped.data.current.skipCount, 0);
+  assert.deepEqual(skipped.data.playback, { status: 'paused', revision: paused.playback.revision + 1, startedAt: null, position: 0 });
+  assert.equal(positionAt(skipped.data.playback, skipped.data.serverTime + 3600000), 0);
+  assert.deepEqual((await host.call(path)).data.playback, skipped.data.playback);
+  const frozen = structuredClone(await store.getRoom(created.data.id));
+  frozen.current.duration = 1;
+  assert.equal(settlePlayback(frozen, skipped.data.serverTime + 3600000), false);
+  const resumed = await host.call(path + '/control', { command: 'resume', songId: next.id });
+  assert.equal(resumed.data.playback.status, 'playing');
+  assert.ok(positionAt(resumed.data.playback, resumed.data.serverTime) < 0.1);
+  await host.call(path + '/control', { command: 'pause', songId: next.id, position: 2 });
+  await host.call(path + '/skip', { songId: next.id, value: true });
+  const empty = await guest.call(path + '/skip', { songId: next.id, value: true });
+  assert.equal(empty.data.current, null);
+  assert.equal(empty.data.playback.status, 'idle');
+  assert.equal(empty.data.playback.startedAt, null);
+});
+
 test('방장이 일시정지하면 재생 위치와 자동 전환이 멈추고 같은 위치부터 재개한다', async t => {
   const redis = emulator(), store = createRoomStore(redis.backend());
   const base = await listen(t, http.createServer(createHandler(async () => store)));
