@@ -8,12 +8,25 @@ import { runInNewContext } from 'node:vm';
 import { queue, refreshPresence, advance, settlePlayback } from '../room.js';
 import { positionAt, playablePosition, playbackLabel } from '../public/session.js';
 import { youtubeError, createYoutubeLoader } from '../public/youtube.js';
-import { createHandler, videoId } from '../lib/handler.js';
+import { createHandler as createRealHandler, videoId } from '../lib/handler.js';
+import { verifyMusicVideo } from '../lib/songs.js';
 import { createRoomStore, createRedisBackend, COMPARE_AND_SET } from '../lib/storage.js';
 
+// Playback/voting tests isolate admission; admission tests below use the real verifier.
+const testTitles = new Map();
+function createHandler(storeProvider, youtubeFetch) {
+  return createRealHandler(storeProvider, youtubeFetch, {
+    requestIntervalSeconds: 0,
+    verifySong: async id => ({ title: testTitles.get(id) || '검증된 곡', artist: '검증된 채널', channelId: 'test-channel' }),
+  });
+}
+function musicVideo(id = 'abcdefghijk', overrides = {}) {
+  return { id, snippet: { categoryId: '10', title: 'YouTube에서 확인한 제목', channelId: 'UCverified', channelTitle: '확인한 채널', liveBroadcastContent: 'none' }, status: { privacyStatus: 'public', embeddable: true, uploadStatus: 'processed' }, ...overrides };
+}
 function client(base) {
   let cookie = '';
   return { async call(path, data, headers = {}) {
+    if (path.endsWith('/songs') && data) testTitles.set(videoId(data.videoId || data.url), data.title);
     const response = await fetch(base + path, { method: data === undefined ? 'GET' : 'POST', headers: { 'Content-Type': 'application/json', ...(cookie ? { Cookie: cookie } : {}), ...headers }, ...(data === undefined ? {} : { body: JSON.stringify(data) }) });
     if (response.headers.has('set-cookie')) cookie = response.headers.get('set-cookie').split(';')[0];
     return { status: response.status, data: await response.json() };
@@ -104,7 +117,8 @@ test('로컬: 6자리 코드·즉시 재생·한 표·과반 전환·퇴장 삭�
   const dir = mkdtempSync(join(tmpdir(), 'sai-test-'));
   process.env.DATA_DIR = dir; process.env.NODE_ENV = 'test';
   for (const key of ['YOUTUBE_API_KEY', 'VERCEL', 'UPSTASH_REDIS_REST_URL', 'UPSTASH_REDIS_REST_TOKEN', 'KV_REST_API_URL', 'KV_REST_API_TOKEN']) delete process.env[key];
-  const { server } = await import('../dev-server.js');
+  const { createDevServer } = await import('../dev-server.js');
+  const server = createDevServer(createHandler());
   const base = await listen(t, server);
   const tonearm = await fetch(base + '/tonearm.svg');
   assert.equal(tonearm.status, 200);
@@ -171,7 +185,13 @@ test('분산 함수: 동시 투표·신청·종료의 중복 방지와 공유 �
   const redis = emulator();
   const stores = [createRoomStore(redis.backend()), createRoomStore(redis.backend())];
   let youtubeCalls = 0, index = 0;
-  const youtubeFetch = async () => { youtubeCalls++; return { ok: true, json: async () => ({ items: [{ id: { videoId: 'abcdefghijk' }, snippet: { title: '검색된 곡', channelTitle: '가수' } }] }) }; };
+  const youtubeFetch = async url => {
+    const params = new URL(url).searchParams;
+    assert.equal(params.get('videoCategoryId'), '10');
+    assert.equal(params.get('safeSearch'), 'strict');
+    youtubeCalls++;
+    return { ok: true, json: async () => ({ items: [{ id: { videoId: 'abcdefghijk' }, snippet: { title: '검색된 곡', channelTitle: '가수' } }] }) };
+  };
   const handlers = stores.map(store => createHandler(async () => store, youtubeFetch));
   const base = await listen(t, http.createServer((req, res) => handlers[index++ % 2](req, res)));
   const host = client(base), a = client(base), b = client(base), c = client(base);
@@ -794,4 +814,144 @@ test('플레이어 준비 완료가 오지 않아도 시간 초과 후 재시도
   assert.equal(c.$('#retry-playback').hidden, false);
   assert.equal(h.messages.at(-1).body.command, 'error');
   assert.equal(h.messages.at(-1).body.errorCode, 'api');
+});
+
+test('곡 검증은 음악·공개·외부 재생·처리 상태를 확인하고 클라이언트 제목을 신뢰하지 않는다', async t => {
+  const previous = process.env.YOUTUBE_API_KEY;
+  process.env.YOUTUBE_API_KEY = 'private-test-key';
+  t.after(() => { if (previous === undefined) delete process.env.YOUTUBE_API_KEY; else process.env.YOUTUBE_API_KEY = previous; });
+  const fetchVideo = video => async url => {
+    const parsed = new URL(url);
+    assert.equal(parsed.pathname, '/youtube/v3/videos');
+    assert.equal(parsed.searchParams.get('part'), 'snippet,status');
+    assert.equal(parsed.searchParams.get('id'), 'abcdefghijk');
+    return { ok: true, json: async () => ({ items: video ? [video] : [] }) };
+  };
+  assert.deepEqual(await verifyMusicVideo('abcdefghijk', fetchVideo(musicVideo())), { title: 'YouTube에서 확인한 제목', artist: '확인한 채널', channelId: 'UCverified' });
+  const valid = musicVideo();
+  for (const video of [null, musicVideo('other123456'), musicVideo(undefined, { snippet: { ...valid.snippet, categoryId: '22' } }), musicVideo(undefined, { status: { ...valid.status, privacyStatus: 'private' } }), musicVideo(undefined, { status: { ...valid.status, privacyStatus: 'unlisted' } }), musicVideo(undefined, { status: { ...valid.status, embeddable: false } }), musicVideo(undefined, { status: { ...valid.status, uploadStatus: 'rejected' } }), musicVideo(undefined, { snippet: { ...valid.snippet, liveBroadcastContent: 'live' } }), musicVideo(undefined, { snippet: { ...valid.snippet, liveBroadcastContent: 'upcoming' } })]) {
+    await assert.rejects(verifyMusicVideo('abcdefghijk', fetchVideo(video)), error => error.status === 400);
+  }
+  for (const fetchImpl of [async () => { throw Error('private-test-key'); }, async () => ({ ok: false }), async () => ({ ok: true, json: async () => { throw Error(); } }), async () => ({ ok: true, json: async () => ({}) })]) {
+    await assert.rejects(verifyMusicVideo('abcdefghijk', fetchImpl), error => error.status === 502 && !error.message.includes('private-test-key'));
+  }
+  delete process.env.YOUTUBE_API_KEY;
+  await assert.rejects(verifyMusicVideo('abcdefghijk', fetchVideo(valid)), error => error.status === 503);
+});
+
+test('신청은 공유 저장소로 30초에 한 번 제한하고 재입장·동시 요청·위조 메타데이터를 막는다', async t => {
+  const redis = emulator(), store = createRoomStore(redis.backend());
+  const previous = process.env.YOUTUBE_API_KEY;
+  process.env.YOUTUBE_API_KEY = 'test-admission-key';
+  t.after(() => { if (previous === undefined) delete process.env.YOUTUBE_API_KEY; else process.env.YOUTUBE_API_KEY = previous; });
+  let calls = 0, category = '10', index = 0;
+  const fetchVideo = async url => {
+    calls++;
+    const id = new URL(url).searchParams.get('id');
+    const video = musicVideo(id);
+    video.snippet.categoryId = category;
+    return { ok: true, json: async () => ({ items: [video] }) };
+  };
+  const handlers = [store, createRoomStore(redis.backend())].map(shared => createRealHandler(async () => shared, fetchVideo));
+  const base = await listen(t, http.createServer((req, res) => handlers[index++ % 2](req, res)));
+  const host = client(base), guest = client(base), outsider = client(base);
+  const created = await host.call('/api/rooms', { title: '검증된 신청', name: '방장' });
+  const path = '/api/rooms/' + created.data.id;
+  await guest.call(path + '/join', { name: '참여자' });
+  assert.equal((await outsider.call(path + '/songs', { videoId: 'abcdefghijk' })).status, 401);
+  assert.equal(calls, 0);
+  const first = await host.call(path + '/songs', { videoId: 'abcdefghijk', title: '음악으로 위장한 제목', channelId: 'forged', categoryId: '10' });
+  assert.equal(first.status, 200);
+  assert.equal(first.data.current.title, 'YouTube에서 확인한 제목');
+  assert.equal(first.data.current.channelId, 'UCverified');
+  assert.equal(first.data.current.addedByDevice, undefined);
+  const results = await Promise.all(['lmnopqrstuv', '12345678901'].map(videoId => guest.call(path + '/songs', { videoId })));
+  assert.deepEqual(results.map(result => result.status).sort(), [200, 429]);
+  assert.equal(calls, 2);
+  await guest.call(path + '/leave', {});
+  await guest.call(path + '/join', { name: '재입장' });
+  assert.equal((await guest.call(path + '/songs', { videoId: 'z2345678901' })).status, 429);
+  assert.equal(calls, 2);
+  redis.tick(30001);
+  category = '22';
+  assert.equal((await guest.call(path + '/songs', { videoId: 'z2345678901', categoryId: '10' })).status, 400);
+  category = '10';
+  assert.equal((await guest.call(path + '/songs', { videoId: 'z2345678901' })).status, 429);
+  assert.equal(calls, 3);
+  assert.equal((await host.call(path)).data.queue.length, 1);
+  redis.tick(30001);
+  assert.equal((await guest.call(path + '/songs', { videoId: 'z2345678901' })).status, 200);
+  redis.tick(30001);
+  assert.equal((await guest.call(path + '/songs', { videoId: 'y2345678901' })).status, 200);
+  await guest.call(path + '/leave', {});
+  await guest.call(path + '/join', { name: '다시 재입장' });
+  redis.tick(30001);
+  assert.equal((await guest.call(path + '/songs', { videoId: 'x2345678901' })).status, 429);
+  assert.equal((await host.call(path)).data.queue.length, 3);
+  const pending = (await host.call(path)).data.queue[0];
+  assert.equal((await guest.call(path + '/remove-song', { songId: pending.id })).status, 403);
+  await host.call(path + '/votes', { songId: pending.id, value: 1 });
+  const before = await store.getRoom(created.data.id);
+  const removed = await host.call(path + '/remove-song', { songId: pending.id });
+  assert.equal(removed.status, 200);
+  assert.equal(removed.data.queue.length, 2);
+  assert.deepEqual(removed.data.playback, first.data.playback);
+  const after = await store.getRoom(created.data.id);
+  assert.ok(Object.values(after.votes).every(votes => !Object.hasOwn(votes, pending.id)));
+  assert.equal(after.current.id, before.current.id);
+  assert.equal((await host.call(path + '/remove-song', { songId: pending.id })).status, 409);
+  assert.equal((await host.call(path + '/remove-song', { songId: first.data.current.id })).status, 409);
+  assert.equal((await guest.call(path + '/songs', { videoId: 'x2345678901' })).status, 200);
+  const state = (await outsider.call(path)).data;
+  assert.ok(!JSON.stringify(state).includes('addedByDevice'));
+  await host.call(path + '/skip', { songId: state.current.id, value: true });
+  const advanced = (await guest.call(path + '/skip', { songId: state.current.id, value: true })).data;
+  assert.ok(!JSON.stringify(advanced).includes('addedByDevice'));
+  assert.equal(advanced.history.length, 1);
+});
+
+test('동시 신청에도 개인 대기곡은 3곡을 넘지 않는다', async t => {
+  const redis = emulator(), store = createRoomStore(redis.backend());
+  const handlers = [store, createRoomStore(redis.backend())].map(shared => createHandler(async () => shared));
+  let index = 0;
+  const base = await listen(t, http.createServer((req, res) => handlers[index++ % 2](req, res)));
+  const host = client(base), guest = client(base);
+  const created = await host.call('/api/rooms', { title: '동시 대기곡', name: '방장' });
+  const path = '/api/rooms/' + created.data.id;
+  await guest.call(path + '/join', { name: '참여자' });
+  await host.call(path + '/songs', { videoId: 'abcdefghijk', title: '현재 곡' });
+  const results = await Promise.all(['lmnopqrstuv', '12345678901', 'z2345678901', 'y2345678901'].map(videoId => guest.call(path + '/songs', { videoId })));
+  assert.deepEqual(results.map(result => result.status).sort(), [200, 200, 200, 429]);
+  assert.equal((await host.call(path)).data.queue.length, 3);
+});
+
+test('대기곡 삭제 버튼은 방장에게만 표시되고 중복 클릭을 막으며 완료 후 풀린다', async () => {
+  const source = readFileSync(new URL('../public/app.js', import.meta.url), 'utf8');
+  const renderSource = source.slice(source.indexOf('function renderRoom()'), source.indexOf('function decodeTitle('));
+  for (const isCreator of [true, false]) {
+    const elements = new Map(), button = { dataset: { remove: 'pending-song' }, disabled: false }, calls = [];
+    let finish;
+    const pending = new Promise(resolve => { finish = resolve; });
+    const get = selector => {
+      if (!elements.has(selector)) elements.set(selector, { textContent: '', innerHTML: '', dataset: { mode: 'request' }, insertAdjacentHTML() {} });
+      return elements.get(selector);
+    };
+    const context = {
+      room: { isCreator, id: '123456', title: '삭제 버튼', me: { id: 'member' }, members: [], current: null, queue: [{ id: 'pending-song', videoId: 'abcdefghijk', title: '대기곡', addedByName: '신청자', likes: 0, passes: 0, myVote: 0 }] },
+      $: get, document: { querySelectorAll: selector => selector === '[data-remove]' && get('#queue').innerHTML.includes('data-remove=') ? [button] : [] },
+      esc: value => value, renderLocalPlayback() {}, notify: message => calls.push(message), safe: fn => fn(),
+      act: async (action, input) => { calls.push([action, input.songId]); await pending; },
+    };
+    runInNewContext(renderSource, context);
+    context.renderRoom();
+    assert.equal(get('#queue').innerHTML.includes('data-remove="pending-song"'), isCreator);
+    if (isCreator) {
+      const deleting = button.onclick();
+      assert.equal(button.disabled, true);
+      assert.deepEqual(calls[0], ['remove-song', 'pending-song']);
+      finish(); await deleting;
+      assert.equal(button.disabled, false);
+      assert.equal(calls[1], '대기곡을 삭제했어요.');
+    } else assert.equal(button.onclick, undefined);
+  }
 });
