@@ -15,5 +15,5 @@ export function playbackLabel(room, now) {
   const reportAge = room?.current && Number.isFinite(room.playback.reportedAt) ? now - room.playback.reportedAt : 0;
   if (room?.creatorConnection === 'disconnected' || reportAge >= 30000) return '방장 연결 끊김';
   if (room?.creatorConnection === 'reconnecting' || (room?.current && Number.isFinite(room.playback.reportedAt) && now - room.playback.reportedAt >= room.playback.leaseMs)) return '방장 연결 확인 중';
-  return ({ playing: '함께 듣는 중', buffering: '버퍼링 중', paused: '일시정지', blocked: '재생 시작 대기', waiting: '재생 준비 중', disconnected: '방장 연결 확인 중', idle: '신청곡 대기 중' })[room?.playback.status] || '재생 준비 중';
+  return ({ error: '재생 오류 · 방장 재시도 대기', playing: '함께 듣는 중', buffering: '버퍼링 중', paused: '일시정지', blocked: '재생 시작 대기', waiting: '재생 준비 중', disconnected: '방장 연결 확인 중', idle: '신청곡 대기 중' })[room?.playback.status] || '재생 준비 중';
 }

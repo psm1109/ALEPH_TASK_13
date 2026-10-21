@@ -7,6 +7,7 @@ import { join } from 'node:path';
 import { runInNewContext } from 'node:vm';
 import { queue, refreshPresence, advance, settlePlayback } from '../room.js';
 import { positionAt, playablePosition, playbackLabel } from '../public/session.js';
+import { youtubeError, createYoutubeLoader } from '../public/youtube.js';
 import { createHandler, videoId } from '../lib/handler.js';
 import { createRoomStore, createRedisBackend, COMPARE_AND_SET } from '../lib/storage.js';
 
@@ -159,6 +160,8 @@ test('로컬: 6자리 코드·즉시 재생·한 표·과반 전환·퇴장 삭�
   assert.equal(videoId('https://www.youtube.com/shorts/abcdefghijk'), 'abcdefghijk');
   assert.equal(videoId('javascript:alert(1)'), null);
   assert.equal(videoId('https://youtube.com/playlist?list=abcdefghijk'), null);
+  const youtubeModule = await fetch(base + '/youtube.js'); assert.equal(youtubeModule.status, 200);
+  assert.match(await youtubeModule.text(), /export function createYoutubeLoader/);
   const home = await fetch(base); assert.equal(home.status, 200); assert.match(await home.text(), /사이/);
   assert.match(home.headers.get('content-security-policy'), /frame-src https:\/\/www.youtube.com/);
   assert.equal((await fetch(base + '/data/serverless-local.json')).status, 404);
@@ -318,7 +321,7 @@ test('배포 경로·정적 파일·보안 정책을 구성한다', () => {
   const config = JSON.parse(readFileSync(new URL('../vercel.json', import.meta.url), 'utf8'));
   assert.equal(config.outputDirectory, 'dist'); assert.equal(config.rewrites[0].destination, '/api/index?__route=:route*');
   assert.equal(config.functions['api/index.js'].maxDuration, 30);
-  for (const name of ['index.html', 'app.js', 'style.css']) assert.ok(readFileSync(new URL(`../public/${name}`, import.meta.url)).length > 0);
+  for (const name of ['index.html', 'app.js', 'style.css', 'youtube.js']) assert.ok(readFileSync(new URL(`../public/${name}`, import.meta.url)).length > 0);
 });
 
 test('찬성 2표 곡이 찬성 1·패스 1표 곡보다 먼저 표시되고 실제 다음 곡이 된다', async t => {
@@ -376,7 +379,7 @@ test('방 생성자만 재생을 담당하고 퇴장 후에도 권한을 넘기�
   }
   assert.equal((await host.call(path)).data.isCreator, true);
   const report = await attachPlayer(host, path, song.id);
-  assert.equal((await report('unavailable')).data.current, null);
+  assert.equal((await report('unavailable', { errorCode: 100 })).data.current, null);
   await host.call(path + '/leave', {});
   assert.equal((await guest.call(path)).data.isCreator, false);
   assert.equal((await host.call(path + '/join', { name: '다시 방장' })).data.isCreator, true);
@@ -453,10 +456,10 @@ function playerHarness() {
   const now = Date.now(); let state = 1, currentTime = 23;
   const room = { isCreator: true, current: { id: 'song', videoId: 'abcdefghijk', duration: 180 }, playback: { position: 20, status: 'playing', reportedAt: now, revision: 2, leaseMs: 10000 } };
   const context = {
-    URL, Date, location: { origin: 'https://sai.example.test' }, room, playerReady: true, loadedSong: 'song', claimedSong: 'song', claimedRevision: 2,
+    URL, Date, youtubeError, clearTimeout() {}, setTimeout() { return 1; }, playerReadyTimer: null, playerFailure: null, retryingSong: null, location: { origin: 'https://sai.example.test' }, room, playerReady: true, loadedSong: 'song', claimedSong: 'song', claimedRevision: 2,
     playbackSession: 'test-browser-session-0001', reportSequence: 0, lastPlaybackReport: 0, lastClaim: 0,
     syncBusy: false, reportBusy: false, durationBusy: false, durationSentFor: null,
-    pendingControl: null, playbackFailure: false, unavailableSong: null, localPaused: false, localBlocked: false, internalPause: false, awaitingPlayback: false,
+    pendingControl: null, playbackFailure: false, localPaused: false, localBlocked: false, internalPause: false, awaitingPlayback: false,
     serverNow: () => Date.now(), positionAt, playbackLabel,
     $: selector => { if (!elements.has(selector)) elements.set(selector, { textContent: '', hidden: false, classList: { toggle() {}, remove() {} } }); return elements.get(selector); },
     YT: { PlayerState: { PLAYING: 1, PAUSED: 2, BUFFERING: 3, ENDED: 0 } },
@@ -617,4 +620,178 @@ test('병합: 재생 버튼은 확인 위치를 지키고 정지 버튼은 직�
   const count = h.messages.length;
   c.controlPlayback('pause');
   assert.equal(h.messages.length, count);
+});
+
+
+test('YouTube 오류는 삭제·비공개·외부 재생 금지만 자동 건너뛰기로 분류한다', () => {
+  for (const code of [100, 101, 150]) assert.equal(youtubeError(code).skip, true);
+  for (const code of [2, 5, 153, 0, 999, 'api', undefined, 'toString']) assert.equal(youtubeError(code).skip, false);
+  assert.equal(youtubeError(153).kind, 'configuration');
+  assert.equal(youtubeError(5).kind, 'player');
+  assert.equal(youtubeError(999).kind, 'unknown');
+});
+
+function youtubeLoaderHarness() {
+  const scripts = [], activeTimers = new Map(); let nextTimer = 0, previousCalls = 0;
+  const previousReady = () => { previousCalls++; };
+  const environment = { onYouTubeIframeAPIReady: previousReady };
+  const document = {
+    createElement: () => ({ removed: false, remove() { this.removed = true; } }),
+    head: { append(script) { scripts.push(script); } },
+  };
+  const timers = { setTimeout(callback, delay) { assert.equal(delay, 15000); activeTimers.set(++nextTimer, callback); return nextTimer; }, clearTimeout(id) { activeTimers.delete(id); } };
+  return { environment, scripts, activeTimers, previousReady, get previousCalls() { return previousCalls; }, load: createYoutubeLoader(environment, document, timers) };
+}
+
+test('API 로딩 실패는 요청·스크립트·타이머를 정리하고 동시 재시도를 하나로 합친다', async () => {
+  const h = youtubeLoaderHarness();
+  const first = h.load(); assert.equal(h.load(), first); assert.equal(h.scripts.length, 1);
+  h.scripts[0].onerror();
+  await assert.rejects(first, /다시 시도/);
+  assert.equal(h.scripts[0].removed, true); assert.equal(h.activeTimers.size, 0);
+  assert.equal(h.environment.onYouTubeIframeAPIReady, h.previousReady);
+  const retry = h.load(); assert.notEqual(retry, first); assert.equal(h.load(), retry);
+  assert.equal(h.scripts.length, 2);
+  h.environment.YT = { Player() {} };
+  h.environment.onYouTubeIframeAPIReady(); await retry;
+  assert.equal(h.activeTimers.size, 0); assert.equal(h.previousCalls, 1);
+  await h.load(); assert.equal(h.scripts.length, 2);
+});
+
+test('API 로딩 시간 초과 뒤 늦은 콜백은 다음 로딩 요청을 방해하지 않는다', async () => {
+  const h = youtubeLoaderHarness();
+  const first = h.load(), staleReady = h.environment.onYouTubeIframeAPIReady;
+  [...h.activeTimers.values()][0]();
+  await assert.rejects(first, /응답이 늦어/);
+  assert.equal(h.activeTimers.size, 0); assert.equal(h.scripts[0].removed, true);
+  const retry = h.load(), currentReady = h.environment.onYouTubeIframeAPIReady;
+  h.environment.YT = { Player() {} };
+  staleReady();
+  assert.equal(h.environment.onYouTubeIframeAPIReady, currentReady);
+  assert.equal(h.activeTimers.size, 1);
+  currentReady(); await retry;
+  assert.equal(h.activeTimers.size, 0);
+});
+
+test('일시적·설정·알 수 없는 오류는 곡과 위치를 보존하고 명시적 재시도로만 해제한다', async t => {
+  const redis = emulator(), store = createRoomStore(redis.backend());
+  const base = await listen(t, http.createServer(createHandler(async () => store)));
+  const host = client(base), guest = client(base);
+  const created = await host.call('/api/rooms', { title: '오류 복구', name: '방장' });
+  const path = '/api/rooms/' + created.data.id;
+  await guest.call(path + '/join', { name: '참여자' });
+  const song = (await host.call(path + '/songs', { videoId: 'abcdefghijk', title: '보존할 곡' })).data.current;
+  await guest.call(path + '/songs', { videoId: 'lmnopqrstuv', title: '대기곡' });
+  const sessionId = 'retry-test-player-session-001';
+  let attached = await host.call(path + '/control', { command: 'attach', songId: song.id, sessionId });
+  let sequence = 0;
+  const send = (command, details = {}) => host.call(path + '/control', { command, songId: song.id, sessionId, revision: attached.data.playback.revision, sequence: ++sequence, ...details });
+  await send('progress', { status: 'playing', position: 42 });
+  for (const errorCode of [2, 5, 153, 999, 'api']) {
+    assert.equal((await send('unavailable', { errorCode })).status, 400);
+    const failed = await send('error', { errorCode, position: 99 });
+    assert.equal(failed.status, 200); assert.equal(failed.data.current.id, song.id);
+    assert.equal(failed.data.playback.status, 'error'); assert.equal(failed.data.playback.errorCode, errorCode);
+    assert.equal(positionAt(failed.data.playback, failed.data.serverTime + 60000), 42);
+    assert.equal(failed.data.queue.length, 1); assert.equal(failed.data.history.length, 0);
+    assert.equal((await send('progress', { status: 'playing', position: 99 })).status, 409);
+    assert.equal((await send('ended', { position: 180 })).status, 409);
+    const retained = await host.call(path + '/control', { command: 'attach', songId: song.id, sessionId });
+    assert.equal(retained.data.playback.status, 'error'); // A refresh cannot silently retry.
+    attached = await host.call(path + '/control', { command: 'attach', songId: song.id, sessionId, retry: true });
+    sequence = 0;
+    assert.equal(attached.data.playback.errorCode, undefined);
+    assert.equal(attached.data.playback.status, 'waiting'); assert.equal(attached.data.playback.position, 42);
+    const resumed = await send('progress', { status: 'playing', position: 42 });
+    assert.equal(resumed.data.playback.status, 'playing');
+  }
+  assert.equal((await guest.call(path + '/control', { command: 'error', songId: song.id, errorCode: 5 })).status, 403);
+  await send('pause', { position: 42 });
+  await send('error', { errorCode: 5 });
+  attached = await host.call(path + '/control', { command: 'attach', songId: song.id, sessionId, retry: true });
+  assert.equal(attached.data.playback.status, 'paused'); assert.equal(attached.data.playback.position, 42);
+  assert.equal(attached.data.playback.errorCode, undefined);
+});
+
+test('삭제·비공개와 외부 재생 금지 오류는 다음 곡을 한 번만 선택한다', async t => {
+  const redis = emulator(), store = createRoomStore(redis.backend());
+  const base = await listen(t, http.createServer(createHandler(async () => store)));
+  const host = client(base);
+  for (const errorCode of [100, 101, 150]) {
+    const created = await host.call('/api/rooms', { title: '재생 금지', name: '방장' });
+    const path = '/api/rooms/' + created.data.id;
+    const song = (await host.call(path + '/songs', { videoId: 'abcdefghijk', title: '재생 불가' })).data.current;
+    await host.call(path + '/songs', { videoId: 'lmnopqrstuv', title: '다음 곡' });
+    const report = await attachPlayer(host, path, song.id);
+    const skipped = await report('unavailable', { errorCode });
+    assert.equal(skipped.status, 200); assert.equal(skipped.data.current.title, '다음 곡');
+    assert.equal(skipped.data.history.length, 1);
+    assert.equal((await report('unavailable', { errorCode })).status, 409);
+  }
+});
+
+test('플레이어 오류는 재시도 버튼을 표시하고 마지막 확인 위치에서 새 플레이어를 만든다', async () => {
+  const h = playerHarness(), c = h.context;
+  c.showPlayerError(5);
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(h.messages.at(-1).body.command, 'error'); assert.equal(h.messages.at(-1).body.errorCode, 5);
+  assert.equal(c.$('#retry-playback').hidden, false);
+  const count = h.messages.length;
+  await c.syncPlayer(); assert.equal(h.loads.length, 0); assert.equal(h.messages.length, count);
+  let destroyed = 0, events;
+  const original = c.player;
+  original.destroy = () => { destroyed++; };
+  const replacement = { ...original, getIframe: () => ({ setAttribute() {} }) };
+  c.loadYoutube = async () => {};
+  c.YT.Player = function (mount, options) { events = options.events; return replacement; };
+  await c.retryPlayback();
+  assert.equal(destroyed, 1); assert.equal(c.player, replacement);
+  assert.equal(h.messages.at(-1).body.retry, true);
+  events.onReady({ target: replacement });
+  assert.equal(h.loads.at(-1).startSeconds, 20);
+  assert.equal(c.playerFailure, null); assert.equal(c.$('#retry-playback').hidden, true);
+  events.onError({ target: original, data: 100 }); // A removed frame cannot skip this track.
+  assert.equal(c.playerFailure, null);
+  events.onError({ target: replacement, data: 153 });
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(h.messages.at(-1).body.command, 'error'); assert.equal(c.playerFailure.kind, 'configuration');
+});
+
+test('플레이어 API 실패는 자동 무한 재호출 없이 버튼으로 다시 불러온다', async () => {
+  const h = playerHarness(), c = h.context;
+  c.player = null; c.playerReady = false; c.loadedSong = null;
+  let attempts = 0, events;
+  c.loadYoutube = async () => { if (++attempts === 1) throw Error('network'); };
+  c.YT.Player = function (mount, options) {
+    events = options.events;
+    return { getIframe: () => ({ setAttribute() {} }), loadVideoById: video => h.loads.push(video), cueVideoById: video => h.loads.push(video), getVideoUrl: () => 'https://www.youtube.com/watch?v=abcdefghijk', getDuration: () => 180, getPlayerState: () => 1, getCurrentTime: () => 20 };
+  };
+  await c.syncPlayer();
+  assert.equal(c.playerFailure.kind, 'api'); assert.equal(c.$('#retry-playback').hidden, false);
+  const api = c.YT; c.YT = undefined;
+  await c.reportPlayback();
+  c.YT = api;
+  assert.equal(h.messages.at(-1).body.errorCode, 'api');
+  await c.syncPlayer(); assert.equal(attempts, 1);
+  await c.retryPlayback(); assert.equal(attempts, 2);
+  events.onReady({ target: c.player });
+  assert.equal(h.loads.at(-1).startSeconds, 20);
+});
+
+
+test('플레이어 준비 완료가 오지 않아도 시간 초과 후 재시도할 수 있다', async () => {
+  const h = playerHarness(), c = h.context;
+  c.player = null; c.playerReady = false; c.loadedSong = null;
+  let readyTimeout;
+  c.setTimeout = callback => { readyTimeout = callback; return 1; };
+  c.loadYoutube = async () => {};
+  c.YT.Player = function () { return {}; };
+  await c.syncPlayer();
+  assert.equal(c.playerFailure, null);
+  readyTimeout();
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(c.playerFailure.kind, 'api');
+  assert.equal(c.$('#retry-playback').hidden, false);
+  assert.equal(h.messages.at(-1).body.command, 'error');
+  assert.equal(h.messages.at(-1).body.errorCode, 'api');
 });
