@@ -663,6 +663,27 @@ function youtubeLoaderHarness() {
   return { environment, scripts, activeTimers, previousReady, get previousCalls() { return previousCalls; }, load: createYoutubeLoader(environment, document, timers) };
 }
 
+test('기본 로더는 브라우저 타이머에 잘못된 this를 전달하지 않는다', async () => {
+  const originalSetTimeout = globalThis.setTimeout, originalClearTimeout = globalThis.clearTimeout;
+  const environment = {}, scripts = [], activeTimers = new Map();
+  let timerId = 0;
+  function checkReceiver(receiver) {
+    if (receiver !== undefined && receiver !== globalThis) throw TypeError('Illegal invocation');
+  }
+  globalThis.setTimeout = function (callback) { checkReceiver(this); activeTimers.set(++timerId, callback); return timerId; };
+  globalThis.clearTimeout = function (id) { checkReceiver(this); activeTimers.delete(id); };
+  try {
+    const load = createYoutubeLoader(environment, { createElement: () => ({ remove() {} }), head: { append: script => scripts.push(script) } });
+    const pending = load();
+    assert.equal(scripts.length, 1);
+    assert.equal(activeTimers.size, 1);
+    environment.YT = { Player() {} };
+    environment.onYouTubeIframeAPIReady();
+    await pending;
+    assert.equal(activeTimers.size, 0);
+  } finally { globalThis.setTimeout = originalSetTimeout; globalThis.clearTimeout = originalClearTimeout; }
+});
+
 test('API 로딩 실패는 요청·스크립트·타이머를 정리하고 동시 재시도를 하나로 합친다', async () => {
   const h = youtubeLoaderHarness();
   const first = h.load(); assert.equal(h.load(), first); assert.equal(h.scripts.length, 1);

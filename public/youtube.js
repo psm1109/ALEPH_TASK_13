@@ -15,7 +15,8 @@ export function youtubeError(code) {
 }
 
 // One pending request is shared; failure removes its script and resets the cache.
-export function createYoutubeLoader(environment, document, timers = { setTimeout, clearTimeout }) {
+// Wrap Window timers so the helper object is never passed as their receiver.
+export function createYoutubeLoader(environment, document, timers = { setTimeout: (...args) => setTimeout(...args), clearTimeout: (...args) => clearTimeout(...args) }) {
   let pending = null;
   return function loadYoutube() {
     if (environment.YT?.Player) return Promise.resolve();
