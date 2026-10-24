@@ -137,8 +137,11 @@ function landing() {
 }
 function shell() {
   disposeLandingGuide();
-  $('#app').innerHTML = `<section class="room-heading"><div><span class="eyebrow"><span class="dot"></span> OUR LISTENING ROOM</span><h1 id="room-title">모임에 연결 중…</h1><p class="muted">서로의 취향 사이에서, 함께 듣기 좋은 한 곡.</p></div><button id="invite" class="outline">초대 링크 복사 ↗</button></section><div id="connection" class="connection" role="status"></div><div class="room-grid"><section class="left-column"><article class="panel player-panel"><div class="panel-heading"><span class="eyebrow">NOW PLAYING</span><span class="badge" id="player-role"></span></div><div class="room-turntable"><div class="room-vinyl" aria-hidden="true"><div class="room-vinyl-label"><span>SAI</span><small>LISTEN TOGETHER</small></div></div><img class="tonearm" src="/tonearm.svg" alt="" draggable="false"><div id="player-stage" aria-hidden="true" inert hidden><div id="youtube-player"></div></div></div><div id="transport-controls" class="transport-controls" hidden><button id="play-song" class="primary" type="button">▶ 재생</button><button id="pause-song" class="outline" type="button">Ⅱ 일시정지</button></div><div id="player-placeholder" class="player-placeholder"><div class="record"><div class="record-center">sai</div></div><p>우리의 첫 곡을 기다리는 중</p><span>곡을 신청하고 함께 재생해 보세요.</span></div><p id="host-status" class="small muted" role="status"></p><div id="current-info"></div><p id="player-message" class="small muted" role="status"></p><button id="retry-playback" class="outline" type="button" hidden>↻ 재시도</button><div id="play-controls"></div></article><article class="panel request-panel"><div class="panel-heading"><h2>다음엔 뭐 들을까요?</h2><span class="muted small">REQUEST A SONG</span></div><div id="request-content"></div></article></section><aside class="right-column"><section class="panel queue-panel"><div class="panel-heading"><h2>함께 고른 다음 곡 <span id="queue-count" class="count">0</span></h2><span class="small muted">투표순</span></div><p class="small muted queue-help">듣고 싶어요 +1 · 이번엔 패스 −1. 점수가 높은 곡부터, 동점은 신청순으로 들어요. 첫 곡은 바로 시작하니 한 곡 더 신청해 투표해 보세요.</p><div id="queue"></div></section><section class="panel people-panel"><div class="panel-heading"><h2>함께 듣는 사람들</h2><span id="people-count" class="small muted"></span></div><div id="people"></div><p class="small muted">접속을 90초 동안 확인하지 못한 참여자는 자동으로 퇴장해요.</p></section><div class="rule-note"><span>↳</span><p>말하기 어려운 취향도, 한 표면 충분해요.<br><b>투표한 사람의 이름은 공개하지 않아요.</b></p></div></aside></div>`;
+  $('#app').innerHTML = `<section class="room-heading"><h1 id="room-title">모임에 연결 중…</h1><button id="invite" class="outline">초대 링크 ↗</button></section><div id="connection" class="connection" role="status"></div><div class="room-grid"><section class="left-column"><article class="panel player-panel"><div class="panel-heading"><span class="eyebrow">NOW PLAYING</span><span class="badge" id="player-role"></span></div><div class="room-turntable"><div class="room-vinyl" aria-hidden="true"><div class="room-vinyl-label"><span>SAI</span><small>LISTEN TOGETHER</small></div></div><img class="tonearm" src="/tonearm.svg" alt="" draggable="false"><div id="player-stage" aria-hidden="true" inert hidden><div id="youtube-player"></div></div></div><div id="transport-controls" class="transport-controls" hidden><button id="play-song" class="primary" type="button">▶ 재생</button><button id="pause-song" class="outline" type="button">Ⅱ 일시정지</button></div><p id="host-status" class="small muted" role="status"></p><div id="current-info"></div><p id="player-message" class="small muted" role="status"></p><button id="retry-playback" class="outline" type="button" hidden>↻ 재시도</button><div id="play-controls"></div></article><article class="panel request-panel"><div class="panel-heading"><h2>곡 신청</h2><button class="help-button" type="button" data-room-help aria-label="곡 신청 안내">?</button></div><div id="request-content"></div></article></section><aside class="right-column"><section class="panel queue-panel"><div class="panel-heading"><h2>다음 곡 <span id="queue-count" class="count">0</span></h2><button class="help-button" type="button" data-room-help aria-label="대기열과 투표 안내">?</button></div><div id="queue"></div><nav id="queue-pagination" class="queue-pagination" aria-label="대기곡 페이지" hidden><button id="queue-prev" class="outline" type="button" aria-label="이전 대기곡">←</button><span id="queue-page" aria-live="polite"></span><button id="queue-next" class="outline" type="button" aria-label="다음 대기곡">→</button></nav></section><section class="panel people-panel"><div class="panel-heading"><h2>함께 듣는 사람</h2><button id="people-count" class="quiet" type="button" aria-haspopup="dialog" aria-label="전체 참여자 보기"></button></div><div id="people"></div></section></aside></div>`;
   $('#app').insertAdjacentHTML('afterbegin', '<div class="room-backdrop" aria-hidden="true"></div>');
+  renderQueue.page = 0;
+  document.querySelectorAll('[data-room-help]').forEach(button => button.onclick = () => $('#rules').showModal());
+  $('#people-count').onclick = () => $('#people-dialog').showModal();
   $('#retry-playback').onclick = () => safe(retryPlayback);
   $('#play-song').onclick = () => controlPlayback('resume');
   $('#pause-song').onclick = () => controlPlayback('pause');
@@ -167,20 +170,49 @@ function renderRoom() {
   $('#room-code').textContent = room.id;
   $('#player-role').textContent = room.isCreator ? '방장 · 음악 재생' : '방장 기기에서 음악 재생';
   $('#queue-count').textContent = room.queue.length;
-  $('#people-count').textContent = `${room.members.length}명`;
-  $('#people').innerHTML = room.members.map(m => `<span class="person"><span class="avatar">${m.id === room.me?.id ? '나' : esc(m.name.slice(0, 1))}</span>${esc(m.name)}</span>`).join('');
+  $('#people-count').textContent = `${room.members.length}명 ↗`;
+  const personMarkup = m => `<span class="person" title="${esc(m.name)}"><span class="avatar">${m.id === room.me?.id ? '나' : esc(m.name.slice(0, 1))}</span><span class="person-name">${esc(m.name)}</span></span>`;
+  $('#people').innerHTML = room.members.slice(0, 3).map(personMarkup).join('');
+  $('#people-list').innerHTML = room.members.map(personMarkup).join('');
   const song = room.current;
-  $('#current-info').innerHTML = song ? `<div class="playing-label"><span class="equalizer">ııı</span><span id="playback-status">${playbackLabel(room, serverNow())}</span></div><h2>${esc(song.title)}</h2><p class="muted">${esc(song.artist || 'YouTube')} <span class="separator">/</span> ${esc(song.addedByName)} 님의 신청곡</p><a class="external small" href="https://www.youtube.com/watch?v=${song.videoId}" target="_blank" rel="noopener">YouTube에서 보기 ↗</a>` : '<h2>첫 곡은 어떤 음악일까요?</h2><p class="muted">아래에서 듣고 싶은 곡을 신청해 주세요.</p>';
-  if (!room.isCreator) {
-    $('#player-placeholder').hidden = false;
-    $('#player-placeholder p').textContent = song ? '음악은 방장 기기에서 재생돼요' : '우리의 첫 곡을 기다리는 중';
-    $('#player-placeholder span').textContent = '음악은 방을 만든 사람에게만 재생돼요. 곡 신청과 투표로 함께해요.';
-  } else $('#player-placeholder').hidden = Boolean(song);
-  $('#play-controls').innerHTML = song ? `<button class="skip-button ${song.mySkip ? 'selected' : ''}" id="skip" ${!room.me ? 'disabled' : ''}>${song.mySkip ? '✓ 건너뛰기 동의 취소' : '↦ 이 곡 건너뛰기 투표'} <b>${song.skipCount} / ${room.threshold}</b></button><p class="small muted center">현재 참여 ${room.members.length}명 중 ${room.threshold}명이 동의하면 다음 곡으로 넘어가요.</p>` : '<p class="small muted">첫 곡을 신청하면 바로 자동 재생돼요. 이후 곡은 투표 순서로 이어져요.</p>';
+  $('#current-info').innerHTML = song ? `<h2 title="${esc(song.title)}">${esc(song.title)}</h2><p class="muted">${esc(song.artist || 'YouTube')} · ${esc(song.addedByName)} 신청</p><a class="external small" href="https://www.youtube.com/watch?v=${song.videoId}" target="_blank" rel="noopener">YouTube ↗</a>` : '<h2>첫 곡을 신청해 주세요</h2>';
+  $('#play-controls').innerHTML = song ? `<button class="skip-button ${song.mySkip ? 'selected' : ''}" id="skip" ${!room.me ? 'disabled' : ''}>${song.mySkip ? '✓ 건너뛰기 동의 취소' : '↦ 건너뛰기 투표'} <b>${song.skipCount} / ${room.threshold}</b></button>` : '';
   if ($('#skip')) $('#skip').onclick = () => safe(() => act('skip', { songId: room.current.id, value: !room.current.mySkip }));
   $('#play-controls').insertAdjacentHTML('beforeend', '<p id="session-position" class="small muted center" aria-live="off"></p>');
   renderLocalPlayback();
-  $('#queue').innerHTML = room.queue.length ? room.queue.map((s, index) => `<article class="song-row"><span class="song-rank">${String(index + 1).padStart(2, '0')}</span><img src="https://i.ytimg.com/vi/${s.videoId}/default.jpg" alt="" loading="lazy"><div class="song-detail"><h3>${esc(s.title)}</h3><p>${esc(s.artist || 'YouTube')} · ${esc(s.addedByName)} 신청</p><div class="vote-actions"><button data-song="${s.id}" data-vote="1" class="vote ${s.myVote === 1 ? 'selected' : ''}" aria-pressed="${s.myVote === 1}" ${!room.me ? 'disabled' : ''}>♡ 듣고 싶어요 <b>${s.likes}</b></button><button data-song="${s.id}" data-vote="-1" class="vote ${s.myVote === -1 ? 'selected' : ''}" aria-pressed="${s.myVote === -1}" ${!room.me ? 'disabled' : ''}>− 이번엔 패스 <b>${s.passes}</b></button>${room.isCreator ? `<button data-remove="${s.id}" class="vote" aria-label="${esc(s.title)} 대기곡 삭제">삭제</button>` : ''}</div></div></article>`).join('') : '<div class="empty-queue"><span>＋</span><h3>아직 조용한 대기열</h3><p>좋아하는 곡 하나로<br>이 공간을 채워 주세요.</p></div>';
+  renderQueue();
+  // Preserve in-progress inputs while room updates arrive.
+  const mode = room.me ? 'request' : 'join';
+  if ($('#request-content').dataset.mode !== mode) {
+    $('#request-content').dataset.mode = mode;
+    if (!room.me) {
+      $('#request-content').innerHTML = '<form id="join-form" class="inline-form"><label class="grow">닉네임<input name="name" placeholder="나의 닉네임" maxlength="20" required></label><button class="primary">참여하기 ↗</button></form>';
+      $('#join-form').onsubmit = event => { event.preventDefault(); safe(() => act('join', Object.fromEntries(new FormData(event.target)))); };
+    } else {
+      $('#request-content').innerHTML = `<div class="tabs" role="tablist" aria-label="곡 신청 방식"><button role="tab" aria-selected="true" id="search-tab">제목으로 검색</button><button role="tab" aria-selected="false" id="link-tab">유튜브 링크</button></div><div id="search-pane" role="tabpanel"><form id="search-form" class="search-form"><input name="q" placeholder="곡 제목 또는 아티스트를 입력해 주세요" aria-label="곡 제목 또는 아티스트" maxlength="100" required><button class="primary" ${room.searchEnabled ? '' : 'disabled'}>검색 ↗</button></form></div><div id="link-pane" role="tabpanel" hidden><form id="link-form"><label>유튜브 영상 링크<input name="url" type="url" placeholder="https://www.youtube.com/watch?v=…" required></label><button class="primary wide" ${room.searchEnabled ? '' : 'disabled'}>대기열에 신청하기 ＋</button></form></div>`;
+      if (!room.searchEnabled) $('#request-content').insertAdjacentHTML('afterbegin', '<p class="api-note">지금은 곡 신청을 사용할 수 없어요.</p>');
+      const tab = which => { const search = which === 'search'; $('#search-pane').hidden = !search; $('#link-pane').hidden = search; $('#search-tab').setAttribute('aria-selected', search); $('#link-tab').setAttribute('aria-selected', !search); };
+      $('#search-tab').onclick = () => tab('search'); $('#link-tab').onclick = () => tab('link');
+      if (!room.searchEnabled) tab('link');
+      $('#link-form').onsubmit = event => { event.preventDefault(); const form = event.target, button = event.submitter; safe(async () => { button.disabled = true; try { await act('songs', Object.fromEntries(new FormData(form))); form.reset(); notify('곡을 신청했어요.'); } finally { button.disabled = false; } }); };
+      $('#search-form').onsubmit = event => { event.preventDefault(); safe(async () => {
+        const button = event.submitter; button.disabled = true; $('#search-results').textContent = '곡을 찾고 있어요…'; $('#song-search').showModal();
+        try { const result = await request(`search?q=${encodeURIComponent(new FormData(event.target).get('q'))}`); searchItems = result.items;
+          $('#search-results').innerHTML = searchItems.length ? searchItems.map((item, i) => `<article class="search-result"><img src="https://i.ytimg.com/vi/${item.videoId}/default.jpg" alt=""><div><b>${esc(decodeTitle(item.title))}</b><p class="small muted">${esc(decodeTitle(item.artist))}</p></div><button class="outline" data-add="${i}" aria-label="${esc(decodeTitle(item.title))} 신청">＋</button></article>`).join('') : '<p class="muted">검색 결과가 없어요. 다른 검색어를 입력해 주세요.</p>';
+          document.querySelectorAll('[data-add]').forEach(b => b.onclick = () => safe(async () => { const item = searchItems[Number(b.dataset.add)]; b.disabled = true; try { await act('songs', { videoId: item.videoId }); $('#song-search').close(); notify('곡을 신청했어요.'); } finally { b.disabled = false; } }));
+        } catch (error) { $('#search-results').textContent = error.message; } finally { button.disabled = false; }
+      }); };
+    }
+  }
+}
+function renderQueue() {
+  const width = typeof innerWidth === 'number' ? innerWidth : 1280;
+  const height = typeof innerHeight === 'number' ? innerHeight : 768;
+  const pageSize = width >= 980 && height >= 600 ? Math.max(2, Math.min(5, Math.floor((height - 300) / 120))) : 5;
+  const pages = Math.max(1, Math.ceil(room.queue.length / pageSize));
+  renderQueue.page = Math.max(0, Math.min(renderQueue.page || 0, pages - 1));
+  const visibleQueue = room.queue.slice(renderQueue.page * pageSize, (renderQueue.page + 1) * pageSize);
+  $('#queue').innerHTML = visibleQueue.length ? visibleQueue.map((s, index) => `<article class="song-row"><span class="song-rank">${String(renderQueue.page * pageSize + index + 1).padStart(2, '0')}</span><img src="https://i.ytimg.com/vi/${s.videoId}/default.jpg" alt="" loading="lazy"><div class="song-detail"><h3>${esc(s.title)}</h3><p>${esc(s.artist || 'YouTube')} · ${esc(s.addedByName)} 신청</p><div class="vote-actions"><button data-song="${s.id}" data-vote="1" class="vote ${s.myVote === 1 ? 'selected' : ''}" aria-pressed="${s.myVote === 1}" ${!room.me ? 'disabled' : ''}>♡ 듣고 싶어요 <b>${s.likes}</b></button><button data-song="${s.id}" data-vote="-1" class="vote ${s.myVote === -1 ? 'selected' : ''}" aria-pressed="${s.myVote === -1}" ${!room.me ? 'disabled' : ''}>− 이번엔 패스 <b>${s.passes}</b></button>${room.isCreator ? `<button data-remove="${s.id}" class="vote" aria-label="${esc(s.title)} 대기곡 삭제">삭제</button>` : ''}</div></div></article>`).join('') : '<div class="empty-queue"><span aria-hidden="true">＋</span><h3>아직 신청곡이 없어요</h3></div>';
   document.querySelectorAll('[data-vote]').forEach(button => button.onclick = () => {
     const song = room.queue.find(s => s.id === button.dataset.song), value = Number(button.dataset.vote);
     safe(() => act('votes', { songId: song.id, value: song.myVote === value ? 0 : value }));
@@ -190,30 +222,12 @@ function renderRoom() {
     try { await act('remove-song', { songId: button.dataset.remove }); notify('대기곡을 삭제했어요.'); }
     finally { button.disabled = false; }
   }));
-  // Preserve in-progress inputs while room updates arrive.
-  const mode = room.me ? 'request' : 'join';
-  if ($('#request-content').dataset.mode !== mode) {
-    $('#request-content').dataset.mode = mode;
-    if (!room.me) {
-      $('#request-content').innerHTML = '<p class="muted">닉네임을 입력하고 신청과 투표에 참여해 주세요.</p><form id="join-form" class="inline-form"><label class="grow">닉네임<input name="name" placeholder="나의 닉네임" maxlength="20" required></label><button class="primary">참여하기 ↗</button></form>';
-      $('#join-form').onsubmit = event => { event.preventDefault(); safe(() => act('join', Object.fromEntries(new FormData(event.target)))); };
-    } else {
-      $('#request-content').innerHTML = `<div class="tabs" role="tablist" aria-label="곡 신청 방식"><button role="tab" aria-selected="true" id="search-tab">제목으로 검색</button><button role="tab" aria-selected="false" id="link-tab">유튜브 링크</button></div><div id="search-pane" role="tabpanel"><form id="search-form" class="search-form"><input name="q" placeholder="곡 제목 또는 아티스트를 입력해 주세요" aria-label="곡 제목 또는 아티스트" maxlength="100" required><button class="primary" ${room.searchEnabled ? '' : 'disabled'}>검색 ↗</button></form>${room.searchEnabled ? '<p class="small muted">YouTube 음악 카테고리에서 검색해요. 신청 시 영상 정보를 다시 확인해요.</p>' : '<p class="api-note">현재 곡 검색과 신청을 사용할 수 없어요. 잠시 후 다시 이용해 주세요. <button id="use-link" class="text-link">유튜브 링크 입력 ↗</button></p>'}<div id="search-results" aria-live="polite"></div></div><div id="link-pane" role="tabpanel" hidden><form id="link-form"><label>유튜브 영상 링크<input name="url" type="url" placeholder="https://www.youtube.com/watch?v=…" required></label><button class="primary wide" ${room.searchEnabled ? '' : 'disabled'}>대기열에 신청하기 ＋</button></form><p class="small muted">공개된 음악 카테고리 영상만 신청할 수 있어요. 제목과 채널명은 YouTube 정보로 표시해요.</p></div>`;
-      $('#request-content').insertAdjacentHTML('afterbegin', `<p class="small muted">신청 시도는 30초에 한 번, 내 대기곡은 최대 3곡이에요. 음악 분류가 잘못된 영상은 방장에게 삭제를 요청해 주세요.</p>${room.searchEnabled ? '' : '<p class="api-note">현재 곡 검색과 신청을 사용할 수 없어요. 잠시 후 다시 이용해 주세요.</p>'}`);
-      const tab = which => { const search = which === 'search'; $('#search-pane').hidden = !search; $('#link-pane').hidden = search; $('#search-tab').setAttribute('aria-selected', search); $('#link-tab').setAttribute('aria-selected', !search); };
-      $('#search-tab').onclick = () => tab('search'); $('#link-tab').onclick = () => tab('link');
-      if ($('#use-link')) $('#use-link').onclick = () => tab('link');
-      if (!room.searchEnabled) tab('link');
-      $('#link-form').onsubmit = event => { event.preventDefault(); const form = event.target, button = event.submitter; safe(async () => { button.disabled = true; try { await act('songs', Object.fromEntries(new FormData(form))); form.reset(); notify('신청했어요. 재생 중인 곡이 없으면 바로 시작돼요.'); } finally { button.disabled = false; } }); };
-      $('#search-form').onsubmit = event => { event.preventDefault(); safe(async () => {
-        const button = event.submitter; button.disabled = true; $('#search-results').textContent = '곡을 찾고 있어요…';
-        try { const result = await request(`search?q=${encodeURIComponent(new FormData(event.target).get('q'))}`); searchItems = result.items;
-          $('#search-results').innerHTML = searchItems.length ? searchItems.map((item, i) => `<article class="search-result"><img src="https://i.ytimg.com/vi/${item.videoId}/default.jpg" alt=""><div><b>${esc(decodeTitle(item.title))}</b><p class="small muted">${esc(decodeTitle(item.artist))}</p></div><button class="outline" data-add="${i}" aria-label="${esc(decodeTitle(item.title))} 신청">＋</button></article>`).join('') : '<p class="muted">검색 결과가 없어요. 다른 검색어를 입력해 주세요.</p>';
-          document.querySelectorAll('[data-add]').forEach(b => b.onclick = () => safe(async () => { const item = searchItems[Number(b.dataset.add)]; b.disabled = true; try { await act('songs', { videoId: item.videoId }); notify('신청했어요. 재생 중인 곡이 없으면 바로 시작돼요.'); } finally { b.disabled = false; } }));
-        } catch (error) { $('#search-results').textContent = error.message; } finally { button.disabled = false; }
-      }); };
-    }
-  }
+  $('#queue-pagination').hidden = pages <= 1;
+  $('#queue-page').textContent = `${renderQueue.page + 1} / ${pages}`;
+  $('#queue-prev').disabled = renderQueue.page === 0;
+  $('#queue-next').disabled = renderQueue.page === pages - 1;
+  $('#queue-prev').onclick = () => { renderQueue.page--; renderQueue(); };
+  $('#queue-next').onclick = () => { renderQueue.page++; renderQueue(); };
 }
 function decodeTitle(text) { const node = document.createElement('textarea'); node.innerHTML = text; return node.value; }
 async function safe(fn) { try { await fn(); } catch (error) { notify(error.message); } }
@@ -268,7 +282,7 @@ function renderLocalPlayback() {
   if ($('#playback-status')) $('#playback-status').textContent = label;
   if ($('#session-position')) {
     const seconds = Math.floor(positionAt(room?.playback, serverNow()));
-    $('#session-position').textContent = room?.current ? `재생 위치 ${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, '0')} · 방장 기기에서 재생돼요` : '';
+    $('#session-position').textContent = room?.current ? `재생 위치 ${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, '0')}` : '';
   }
 }
 async function reportDuration() {
@@ -405,4 +419,5 @@ async function heartbeat() {
 landing();
 if (initialRoomId) enterRoom(initialRoomId);
 setInterval(() => { if (Date.now() - lastRefresh >= 5000) refresh(); heartbeat(); syncPlayer(); reportPlayback(); renderLocalPlayback(); }, 1000);
+window.addEventListener('resize', () => { if (room) renderQueue(); });
 document.addEventListener('visibilitychange', () => { if (!document.hidden) { refresh(); } });
