@@ -11,6 +11,7 @@ export function createDevServer(apiHandler = handler) {
     securityHeaders(res);
     const assets = { '/': ['index.html', 'text/html'], '/app.js': ['app.js', 'text/javascript'], '/session.js': ['session.js', 'text/javascript'], '/youtube.js': ['youtube.js', 'text/javascript'], '/reflections.js': ['reflections.js', 'text/javascript'], '/style.css': ['style.css', 'text/css'], '/tonearm.svg': ['tonearm.svg', 'image/svg+xml'] };
     assets['/listening-notes.js'] = ['listening-notes.js', 'text/javascript'];
+    assets['/lounge.css'] = ['lounge.css', 'text/css'];
     const asset = assets[path];
     if (req.method !== 'GET' || !asset) { res.writeHead(404); return res.end('Not found'); }
     res.writeHead(200, { 'Content-Type': `${asset[1]}; charset=utf-8`, 'Cache-Control': 'no-cache' });
