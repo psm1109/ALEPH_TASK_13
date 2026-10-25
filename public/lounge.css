@@ -292,6 +292,17 @@ dialog h2{font-size:23px;font-weight:600;letter-spacing:-.7px}
 .listening-context{display:flex;flex-direction:column;align-items:center;gap:3px;margin:16px auto 0;color:var(--text);font-size:12px;line-height:1.7;word-break:keep-all}
 .listening-context strong{font-size:14px;font-weight:600;color:var(--accent)}
 .landing-copy .listening-context+.app-purpose{margin-top:13px;font-size:13px}
+.landing-research-note{max-width:1200px;margin:10px auto 28px;padding:0 12px;color:var(--muted);font-size:12px;line-height:1.85;word-break:keep-all;overflow-wrap:anywhere}
+.landing-research-note strong{display:block;margin-bottom:5px;color:var(--text);font-size:13px;font-weight:600}
+body:has(.landing.is-scene-pinned) .landing-research-note{position:fixed;left:max(28px,calc((100vw - 1424px)/2));bottom:24px;z-index:1;width:min(420px,calc(50vw - 60px));margin:0;padding:0}
+/* Reserve the lower-left explanation without shifting it over the record copy. */
+@media(min-width:701px) and (min-height:650px) and (max-height:800px){
+  .landing.is-scene-pinned .landing-copy-slot.is-pinned{aspect-ratio:auto;min-height:0}
+  .landing.is-scene-pinned .landing-copy{aspect-ratio:auto;min-height:0;height:calc(100svh - 245px)}
+}
+@media(max-width:700px){
+  .landing-research-note{margin:0 0 26px;padding:0 0 0 12px;border-left:2px solid var(--line);font-size:12px}
+}
 #records-open{display:inline-flex;align-items:center;gap:7px}
 .records-count{display:inline-flex;align-items:center;gap:3px;padding:2px 7px;border:1px solid color-mix(in srgb,var(--accent) 30%,var(--line));border-radius:999px;background:color-mix(in srgb,var(--accent) 10%,var(--panel));color:var(--accent);font-size:10px;line-height:1.6;white-space:nowrap;font-variant-numeric:tabular-nums}
 .reflection-trigger.is-recorded{color:var(--accent);border-color:color-mix(in srgb,var(--accent) 40%,var(--line));background:color-mix(in srgb,var(--accent) 8%,var(--panel))}
