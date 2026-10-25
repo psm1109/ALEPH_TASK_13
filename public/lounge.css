@@ -31,6 +31,8 @@ body:has(.room-heading) main{width:100%;max-width:1480px;padding:0 28px}
 .room-tools .quiet{font-size:12px}
 .room-grid{display:grid;grid-template-columns:minmax(190px,.8fr) minmax(280px,1.5fr) minmax(280px,1.05fr);grid-template-rows:auto 1fr;grid-template-areas:"people player queue" "request player queue";gap:16px 24px;align-items:start}
 .room-grid .left-column,.room-grid .right-column{display:contents}
+.queue-column{grid-area:queue;align-self:stretch;display:flex;flex-direction:column;gap:12px;min-width:0;min-height:0}
+.queue-column .queue-panel{flex:1;min-height:0}
 .room-grid .panel{min-width:0;padding:18px;border:1px solid color-mix(in srgb,var(--line) 75%,transparent);border-radius:16px;background:var(--panel);box-shadow:none}
 .room-grid .panel-heading{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:16px;padding:0;border:0;min-width:0}
 .room-grid .panel-heading h2{font-size:14px;font-weight:600;letter-spacing:-.4px;line-height:1.5}
@@ -74,9 +76,8 @@ body:has(.room-heading) main{width:100%;max-width:1480px;padding:0 28px}
 .room-vinyl-label span{position:absolute;top:22%;font-size:clamp(18px,2vw,26px);font-weight:650;letter-spacing:3px}
 .room-vinyl-label small{display:none}
 .tonearm{position:absolute;width:auto;height:min(96cqh,96cqw,410px);right:0;top:50%;transform:translateY(-50%);object-fit:contain;pointer-events:none;user-select:none;z-index:1;filter:drop-shadow(3px 5px 5px #080a0b55)}
-.room-grid .room-turntable #player-stage{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);width:212px;height:200px;min-width:200px;min-height:200px;aspect-ratio:auto;border:0;border-radius:0;overflow:visible;background:#131519;box-shadow:0 8px 28px #0004;z-index:3;pointer-events:auto}
-.room-turntable #youtube-player{position:static;display:block;transform:none;width:100%;height:100%;border:0;border-radius:0}
-.has-video .room-vinyl-label{visibility:hidden}
+.queue-column #player-stage{position:static;flex:0 0 200px;width:100%;height:200px;min-width:200px;min-height:200px;aspect-ratio:auto;border:0;border-radius:0;overflow:visible;background:#131519;box-shadow:0 0 0 1px var(--line);pointer-events:auto}
+#player-stage #youtube-player{position:static;display:block;transform:none;width:100%;height:100%;border:0;border-radius:0}
 .transport-controls{flex:0 0 auto;display:flex;justify-content:center;gap:8px;margin:8px 0 0}
 .transport-controls button{min-width:84px;font-size:12px;padding:7px 14px;border-radius:22px;min-height:34px}
 .room-grid #current-info{flex:0 0 auto;text-align:center;margin-top:10px}
@@ -161,6 +162,15 @@ dialog h2{font-size:23px;font-weight:600;letter-spacing:-.7px}
   #people{gap:10px}
   body:has(.room-heading) footer{margin-top:10px;flex-basis:32px;min-height:32px;padding:4px 0}
 }
+@media(min-width:980px) and (min-height:600px){
+  .queue-column:has(#player-stage:not([hidden])) .queue-panel{padding:12px}
+  .queue-column:has(#player-stage:not([hidden])) .panel-heading{padding-bottom:8px;margin-bottom:0}
+  .queue-column:has(#player-stage:not([hidden])) .song-row{padding:6px 0}
+  .queue-column:has(#player-stage:not([hidden])) .song-thumbnail{width:48px;height:27px;flex-basis:48px}
+  .queue-column:has(#player-stage:not([hidden])) .vote-actions{margin-top:4px}
+  .queue-column:has(#player-stage:not([hidden])) .vote-context{display:none}
+  .queue-column:has(#player-stage:not([hidden])) .queue-pagination{margin-top:6px}
+}
 @media(min-width:701px) and (max-width:979px){
   .room-grid{grid-template-columns:minmax(190px,.7fr) minmax(0,1.3fr);grid-template-areas:"people player" "request player" "queue queue"}
   .room-turntable{min-height:300px}
@@ -186,9 +196,7 @@ dialog h2{font-size:23px;font-weight:600;letter-spacing:-.7px}
   .room-grid .panel{padding:17px;border-radius:14px}
   .room-grid .player-panel{padding:0 0 12px}
   .room-turntable{flex:0 0 auto;min-height:0;aspect-ratio:auto;display:none}
-  .has-video .room-turntable{display:grid;height:200px;min-height:200px;margin:10px 0}
   .room-vinyl,.tonearm{display:none}
-  .room-grid .room-turntable #player-stage{width:min(100%,356px);height:200px;min-width:200px}
   .room-grid #current-info{margin-top:8px}
   .room-grid #current-info h2{font-size:20px}
   #host-status{text-align:right;font-size:11px}
