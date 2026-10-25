@@ -11,6 +11,8 @@ import { youtubeError, createYoutubeLoader } from '../public/youtube.js';
 import { createHandler as createRealHandler, videoId } from '../lib/handler.js';
 import { verifyMusicVideo } from '../lib/songs.js';
 import { createRoomStore, createRedisBackend, COMPARE_AND_SET } from '../lib/storage.js';
+import { recordReflection, reflectionSnapshot } from '../lib/reflections.js';
+import { summarizeReflections, rememberReport, readReports, REPORT_STORAGE_KEY } from '../public/reflections.js';
 
 // Playback/voting tests isolate admission; admission tests below use the real verifier.
 const testTitles = new Map();
@@ -975,4 +977,160 @@ test('대기곡 삭제 버튼은 방장에게만 표시되고 중복 클릭을 �
       assert.equal(calls[1], '대기곡을 삭제했어요.');
     } else assert.equal(button.onclick, undefined);
   }
+});
+
+test('감상 요약은 직접 평가한 곡만 세고 이유는 좋아한 곡에서 중복 없이 집계한다', () => {
+  assert.deepEqual(summarizeReflections([]), { total: 0, counts: { like: 0, neutral: 0, dislike: 0 }, reasons: { melody: 0, lyrics: 0, memory: 0, atmosphere: 0 }, topReasons: [] });
+  const summary = summarizeReflections([
+    { rating: 'like', reasons: ['melody', 'melody', 'lyrics'] },
+    { rating: 'neutral', reasons: ['memory'] },
+    { rating: 'dislike', reasons: ['atmosphere'] },
+    { rating: 'like', reasons: [] },
+  ]);
+  assert.equal(summary.total, 4);
+  assert.deepEqual(summary.counts, { like: 2, neutral: 1, dislike: 1 });
+  assert.deepEqual(summary.reasons, { melody: 1, lyrics: 1, memory: 0, atmosphere: 0 });
+  assert.deepEqual(summary.topReasons, ['melody', 'lyrics']);
+});
+
+test('같은 브라우저의 감상은 수정·재입장해도 하나이며 다른 사람에게 개인 응답을 노출하지 않는다', async t => {
+  const redis = emulator(), store = createRoomStore(redis.backend());
+  const base = await listen(t, http.createServer(createHandler(async () => store)));
+  const host = client(base), guest = client(base), stranger = client(base);
+  const created = await host.call('/api/rooms', { title: '감상 모임', name: '방장' });
+  const path = '/api/rooms/' + created.data.id;
+  await guest.call(path + '/join', { name: '참여자' });
+  const first = (await host.call(path + '/songs', { videoId: 'abcdefghijk', title: '처음 들은 곡' })).data.current;
+  const queued = (await guest.call(path + '/songs', { videoId: 'lmnopqrstuv', title: '아직 안 들은 곡' })).data.queue[0];
+  await guest.call(path + '/votes', { songId: queued.id, value: 1 });
+  assert.equal((await guest.call(path)).data.reflections.personal.total, 0);
+  assert.equal((await stranger.call(path + '/reflections', { songId: first.id, rating: 'like', reasons: [] })).status, 401);
+  assert.equal((await guest.call(path + '/reflections', { songId: queued.id, rating: 'like', reasons: [] })).status, 409);
+  assert.equal((await guest.call(path + '/reflections', { songId: first.id, rating: 'unknown', reasons: [] })).status, 400);
+  assert.equal((await guest.call(path + '/reflections', { songId: { toString: null }, rating: 'like', reasons: [] })).status, 400);
+  assert.equal((await guest.call(path + '/reflections', { songId: first.id, rating: 'like', reasons: ['not-a-reason'] })).status, 400);
+  assert.equal((await guest.call(path + '/reflections', { songId: first.id, rating: 'neutral', reasons: ['lyrics'] })).status, 400);
+  let response = await guest.call(path + '/reflections', { songId: first.id, rating: 'like', reasons: ['melody', 'melody'] });
+  assert.equal(response.status, 200);
+  assert.equal(response.data.current.id, first.id);
+  assert.equal(response.data.queue[0].likes, 1);
+  assert.deepEqual(response.data.reflections.mine[0].reasons, ['melody']);
+  await guest.call(path + '/leave', {});
+  await guest.call(path + '/join', { name: '바뀐 닉네임' });
+  response = await guest.call(path + '/reflections', { songId: first.id, rating: 'dislike', reasons: [] });
+  assert.equal(response.data.reflections.mine.length, 1);
+  assert.equal(response.data.reflections.personal.counts.like, 0);
+  assert.equal(response.data.reflections.personal.counts.dislike, 1);
+  assert.equal(response.data.reflections.personal.reasons.melody, 0);
+  const hostState = (await host.call(path)).data;
+  assert.equal(hostState.reflections.mine.length, 0);
+  assert.equal(hostState.reflections.group.respondents, 1);
+  const publicState = (await stranger.call(path)).data;
+  assert.equal(publicState.reflections, null);
+  assert.ok(!JSON.stringify(publicState).includes('participants'));
+  assert.ok(!JSON.stringify(hostState).includes('addedByDevice'));
+});
+
+test('분산 감상 저장은 동시 응답·중복 수정과 공통점·차이 집계를 보존한다', async t => {
+  const redis = emulator(), stores = [createRoomStore(redis.backend()), createRoomStore(redis.backend())];
+  let index = 0;
+  const handlers = stores.map(store => createHandler(async () => store));
+  const base = await listen(t, http.createServer((req, res) => handlers[index++ % 2](req, res)));
+  const host = client(base), a = client(base), b = client(base);
+  const created = await host.call('/api/rooms', { title: '서로 다른 감상', name: '방장' });
+  const path = '/api/rooms/' + created.data.id;
+  await Promise.all([a.call(path + '/join', { name: 'A' }), b.call(path + '/join', { name: 'B' })]);
+  const song = (await host.call(path + '/songs', { videoId: 'abcdefghijk', title: '공통 곡' })).data.current;
+  const input = { songId: song.id, rating: 'like', reasons: ['lyrics'] };
+  const saved = await Promise.all([a.call(path + '/reflections', input), a.call(path + '/reflections', input), b.call(path + '/reflections', input)]);
+  assert.ok(saved.every(result => result.status === 200));
+  let report = (await host.call(path)).data.reflections;
+  assert.equal(report.personal.total, 0);
+  assert.equal(report.group.respondents, 2); // The host's missing response is not an inferred like.
+  assert.equal(report.group.shared[0].total, 2);
+  assert.equal(report.group.shared[0].like, 2);
+  assert.equal(report.group.different.length, 0);
+  await b.call(path + '/reflections', { ...input, rating: 'dislike', reasons: [] });
+  report = (await a.call(path)).data.reflections;
+  assert.equal(report.mine.length, 1);
+  assert.equal(report.group.shared.length, 0);
+  assert.equal(report.group.different[0].like, 1);
+  assert.equal(report.group.different[0].dislike, 1);
+  assert.ok(redis.conflicts > 0);
+});
+
+test('모임 종료는 방장만 가능하고 재생을 멈추며 종료 후 감상과 24시간 보관을 허용한다', async t => {
+  const redis = emulator(), store = createRoomStore(redis.backend());
+  const base = await listen(t, http.createServer(createHandler(async () => store)));
+  const host = client(base), guest = client(base), stranger = client(base);
+  const created = await host.call('/api/rooms', { title: '마칠 모임', name: '방장' });
+  const path = '/api/rooms/' + created.data.id;
+  await guest.call(path + '/join', { name: '참여자' });
+  const first = (await host.call(path + '/songs', { videoId: 'abcdefghijk', title: '감상할 곡' })).data.current;
+  const player = await attachPlayer(host, path, first.id);
+  await player('progress', { status: 'playing', position: 24 });
+  assert.equal((await guest.call(path + '/finish', {})).status, 403);
+  assert.equal((await stranger.call(path + '/finish', {})).status, 403);
+  const finished = (await host.call(path + '/finish', {})).data;
+  assert.ok(finished.endedAt);
+  assert.equal(finished.playback.status, 'idle');
+  assert.equal(finished.playback.paused, true);
+  assert.equal(finished.playback.position, 24);
+  assert.equal(finished.playback.startedAt, null);
+  const again = (await host.call(path + '/finish', {})).data;
+  assert.equal(again.endedAt, finished.endedAt);
+  assert.equal(again.playback.revision, finished.playback.revision);
+  assert.equal((await player('progress', { status: 'playing', position: 25 })).status, 409);
+  assert.equal((await guest.call(path + '/songs', { videoId: 'lmnopqrstuv' })).status, 409);
+  assert.equal((await guest.call(path + '/skip', { songId: first.id, value: true })).status, 409);
+  assert.equal((await stranger.call(path + '/join', { name: '뒤늦은 참여' })).status, 409);
+  await guest.call(path + '/leave', {});
+  const report = await guest.call(path + '/reflections', { songId: first.id, rating: 'like', reasons: ['memory'] });
+  assert.equal(report.status, 200);
+  assert.equal(report.data.reflections.personal.reasons.memory, 1);
+  assert.equal((await stranger.call(path + '/reflections', { songId: first.id, rating: 'like', reasons: [] })).status, 401);
+  await host.call(path + '/leave', {});
+  const ttlCommands = redis.commands.filter(args => args[0] === 'EVAL' && args.at(-1) !== 'KEEP');
+  assert.equal(ttlCommands.at(-1).at(-1), 86400);
+  redis.tick(91000);
+  assert.equal((await guest.call(path)).status, 200);
+  assert.equal((await stranger.call(path)).data.reflections, null);
+  redis.tick(86400000);
+  assert.equal((await guest.call(path)).status, 404);
+});
+
+test('재생 이력에서 빠진 내 감상은 보존하고 수정하며 감상 수 상한은 새 기록에만 적용한다', () => {
+  const device = 'private-device';
+  const room = { members: [{ device }], current: { id: 'original', videoId: 'abcdefghijk', title: '첫 곡', artist: '가수' }, history: [] };
+  recordReflection(room, device, { songId: 'original', rating: 'like', reasons: ['melody'] });
+  room.current = null;
+  for (let index = 0; index < 199; index++) room.reflections[device][`other-${index}`] = { song: { id: `other-${index}` }, rating: 'neutral', reasons: [], updatedAt: index };
+  recordReflection(room, device, { songId: 'original', rating: 'neutral', reasons: [] });
+  const result = reflectionSnapshot(room, device);
+  assert.equal(result.mine.length, 200);
+  assert.ok(result.tracks.some(song => song.id === 'original'));
+  assert.equal(result.personal.counts.like, 0);
+  room.current = { id: 'new', title: '한도 밖 새 곡' };
+  assert.throws(() => recordReflection(room, device, { songId: 'new', rating: 'like', reasons: [] }), /최대 200곡/);
+});
+
+test('브라우저 기록은 모임별 갱신·최근 20개 보관을 하며 저장 거절과 깨진 데이터를 처리한다', () => {
+  const map = new Map();
+  const storage = { getItem: key => map.get(key) || null, setItem: (key, value) => map.set(key, value) };
+  const report = id => ({ listeningId: String(id), title: '모임 ' + id, reflections: { mine: [] } });
+  for (let index = 0; index < 23; index++) assert.equal(rememberReport(storage, report(index)), true);
+  assert.equal(readReports(storage).length, 20);
+  assert.equal(readReports(storage)[0].listeningId, '22');
+  const updated = { ...report(20), title: '수정된 요약' };
+  rememberReport(storage, updated);
+  assert.equal(readReports(storage).length, 20);
+  assert.equal(readReports(storage)[0].title, '수정된 요약');
+  assert.equal(readReports(storage).filter(item => item.listeningId === '20').length, 1);
+  const denied = { getItem() { throw Error('disabled'); }, setItem() { throw Error('disabled'); } };
+  assert.equal(rememberReport(denied, report(1)), false);
+  assert.deepEqual(readReports(denied), []);
+  map.set(REPORT_STORAGE_KEY, '{broken');
+  assert.deepEqual(readReports(storage), []);
+  map.set(REPORT_STORAGE_KEY, '{}');
+  assert.deepEqual(readReports(storage), []);
 });

@@ -1,5 +1,6 @@
 import { positionAt, playbackLabel } from './session.js';
 import { youtubeError, createYoutubeLoader } from './youtube.js';
+import { createListeningNotes } from './listening-notes.js';
 const loadYoutube = createYoutubeLoader(window, document);
 const $ = selector => document.querySelector(selector);
 let savedTheme;
@@ -30,6 +31,7 @@ let internalPause = false, awaitingPlayback = false;
 let pendingControl = null, playerFailure = null, retryingSong = null, playerReadyTimer = null;
 let syncBusy = false, reportBusy = false, playbackFailure = false;
 const serverNow = () => performance.now() + serverClockOffset;
+const listeningNotes = createListeningNotes({ getRoom: () => room, save: data => act('reflections', data), finish: () => act('finish', {}), notify });
 let disposeLandingGuide = () => {};
 function mountLandingGuide() {
   const guide = document.createElement('div');
@@ -95,7 +97,9 @@ async function request(action = '', data, global = false, targetRoomId = roomId)
 }
 async function act(action, data) { const result = await request(action, data); if (result.deleted) exitRoom(); else accept(result); return result; }
 function stopPlayer() { $('.room-turntable')?.classList.remove('is-playing'); pendingControl = null; playerFailure = null; retryingSong = null; clearTimeout(playerReadyTimer); if (player) player.destroy(); player = null; playerReady = false; loadedSong = null; durationSentFor = null; localPaused = false; localBlocked = false; claimedSong = null; claimedRevision = null; lastClaim = 0; awaitingPlayback = false; }
-function exitRoom() {
+function exitRoom(captureReport = true) {
+  if (captureReport) listeningNotes.capture(room, { leaving: true });
+  for (const selector of ['#reflection-dialog', '#listening-records']) if ($(selector).open) $(selector).close();
   stopPlayer(); room = null; roomId = null; lastSnapshot = ''; lastHeartbeat = 0;
   history.replaceState(null, '', '/'); document.title = '사이 — 우리 사이, 다음 한 곡'; landing();
 }
@@ -152,7 +156,15 @@ function shell() {
   };
   $('#invite').parentElement.insertAdjacentHTML('beforeend', '<div class="room-tools"><button id="copy-code" class="outline">방 코드 <b id="room-code"></b> ⧉</button><button id="leave-room" class="quiet">퇴장하기 ↗</button></div>');
   $('#copy-code').onclick = async () => { try { await navigator.clipboard.writeText(roomId); notify('방 코드를 복사했어요.'); } catch { prompt('방 코드', roomId); } };
-  $('#leave-room').onclick = () => safe(async () => { if (room?.me) await request('leave', {}); exitRoom(); });
+  $('#leave-room').onclick = () => safe(async () => {
+    let report = listeningNotes.capture(room, { leaving: true });
+    if (room?.me) {
+      const result = await request('leave', {});
+      if (!result.deleted) report = listeningNotes.capture(result, { leaving: true }) || report;
+    }
+    exitRoom(false);
+    if (report) listeningNotes.openRecords(report.listeningId);
+  });
   // Presence renewal runs separately from visible-screen polling.
   lastHeartbeat = 0;
 }
@@ -162,30 +174,35 @@ function accept(next) {
   if (Number.isFinite(next.serverTime)) serverClockOffset = next.serverTime + (next._roundTrip || 0) / 2 - (next._receivedAt || performance.now());
   room = next; const { serverTime, ...view } = next; const serialized = JSON.stringify(view);
   if (serialized !== lastSnapshot) { renderRoom(); lastSnapshot = serialized; }
+  listeningNotes.update(next);
   syncPlayer();
 }
 function renderRoom() {
   $('#room-title').textContent = room.title;
   document.title = `${room.title} — 사이`;
   $('#room-code').textContent = room.id;
-  $('#player-role').textContent = room.isCreator ? '방장 · 음악 재생' : '방장 기기에서 음악 재생';
+  $('#player-role').textContent = room.endedAt ? '모임 종료' : room.isCreator ? '방장 · 음악 재생' : '방장 기기에서 음악 재생';
   $('#queue-count').textContent = room.queue.length;
   $('#people-count').textContent = `${room.members.length}명 ↗`;
   const personMarkup = m => `<span class="person" title="${esc(m.name)}"><span class="avatar">${m.id === room.me?.id ? '나' : esc(m.name.slice(0, 1))}</span><span class="person-name">${esc(m.name)}</span></span>`;
   $('#people').innerHTML = room.members.slice(0, 3).map(personMarkup).join('');
   $('#people-list').innerHTML = room.members.map(personMarkup).join('');
   const song = room.current;
-  $('#current-info').innerHTML = song ? `<h2 title="${esc(song.title)}">${esc(song.title)}</h2><p class="muted">${esc(song.artist || 'YouTube')} · ${esc(song.addedByName)} 신청</p><a class="external small" href="https://www.youtube.com/watch?v=${song.videoId}" target="_blank" rel="noopener">YouTube ↗</a>` : '<h2>첫 곡을 신청해 주세요</h2>';
-  $('#play-controls').innerHTML = song ? `<button class="skip-button ${song.mySkip ? 'selected' : ''}" id="skip" ${!room.me ? 'disabled' : ''}>${song.mySkip ? '✓ 건너뛰기 동의 취소' : '↦ 건너뛰기 투표'} <b>${song.skipCount} / ${room.threshold}</b></button>` : '';
+  $('#current-info').innerHTML = song ? `<div class="current-heading"><h2 title="${esc(song.title)}">${esc(song.title)}</h2><button type="button" class="quiet reflection-trigger" id="reflect-current" ${!room.reflections || (!room.me && !room.endedAt) ? 'disabled' : ''}>감상 ↗</button></div><p class="muted">${esc(song.artist || 'YouTube')} · ${esc(song.addedByName)} 신청</p><a class="external small" href="https://www.youtube.com/watch?v=${song.videoId}" target="_blank" rel="noopener">YouTube ↗</a>` : '<h2>첫 곡을 신청해 주세요</h2>';
+  if ($('#reflect-current')) $('#reflect-current').onclick = () => listeningNotes.openReflection(room.current.id);
+  $('#play-controls').innerHTML = song && !room.endedAt ? `<button class="skip-button ${song.mySkip ? 'selected' : ''}" id="skip" ${!room.me ? 'disabled' : ''}>${song.mySkip ? '✓ 건너뛰기 동의 취소' : '↦ 건너뛰기 투표'} <b>${song.skipCount} / ${room.threshold}</b></button>` : '';
   if ($('#skip')) $('#skip').onclick = () => safe(() => act('skip', { songId: room.current.id, value: !room.current.mySkip }));
   $('#play-controls').insertAdjacentHTML('beforeend', '<p id="session-position" class="small muted center" aria-live="off"></p>');
   renderLocalPlayback();
   renderQueue();
   // Preserve in-progress inputs while room updates arrive.
-  const mode = room.me ? 'request' : 'join';
+  const mode = room.endedAt ? 'ended' : room.me ? 'request' : 'join';
   if ($('#request-content').dataset.mode !== mode) {
     $('#request-content').dataset.mode = mode;
-    if (!room.me) {
+    if (room.endedAt) {
+      $('#request-content').innerHTML = '<p class="small muted">모임이 끝났어요.</p><button type="button" class="outline wide" id="ended-summary">감상 요약 보기 ↗</button>';
+      $('#ended-summary').onclick = () => listeningNotes.openRecords(room.listeningId);
+    } else if (!room.me) {
       $('#request-content').innerHTML = '<form id="join-form" class="inline-form"><label class="grow">닉네임<input name="name" placeholder="나의 닉네임" maxlength="20" required></label><button class="primary">참여하기 ↗</button></form>';
       $('#join-form').onsubmit = event => { event.preventDefault(); safe(() => act('join', Object.fromEntries(new FormData(event.target)))); };
     } else {
@@ -228,6 +245,7 @@ function renderQueue() {
   $('#queue-next').disabled = renderQueue.page === pages - 1;
   $('#queue-prev').onclick = () => { renderQueue.page--; renderQueue(); };
   $('#queue-next').onclick = () => { renderQueue.page++; renderQueue(); };
+  if (room.endedAt) $('#queue').querySelectorAll('button').forEach(button => { button.disabled = true; });
 }
 function decodeTitle(text) { const node = document.createElement('textarea'); node.innerHTML = text; return node.value; }
 async function safe(fn) { try { await fn(); } catch (error) { notify(error.message); } }
@@ -235,7 +253,7 @@ function loadedVideoMatches() {
   try { return new URL(player.getVideoUrl()).searchParams.get('v') === room?.current?.videoId; } catch { return false; }
 }
 function showPlayerError(code, songId = room?.current?.id) {
-  if (!room?.isCreator || songId !== room.current?.id) return;
+  if (room?.endedAt || !room?.isCreator || songId !== room.current?.id) return;
   const error = youtubeError(code);
   playerFailure = { ...error, songId };
   retryingSong = null; pendingControl = null;
@@ -243,7 +261,7 @@ function showPlayerError(code, songId = room?.current?.id) {
   playbackChanged();
 }
 async function retryPlayback() {
-  if (!room?.isCreator || !room.current || !playerFailure || playerFailure.skip || syncBusy || reportBusy) return;
+  if (room?.endedAt || !room?.isCreator || !room.current || !playerFailure || playerFailure.skip || syncBusy || reportBusy) return;
   retryingSong = room.current.id;
   playerFailure = null; pendingControl = null;
   clearTimeout(playerReadyTimer);
@@ -254,7 +272,7 @@ async function retryPlayback() {
   await syncPlayer();
 }
 function controlPlayback(command) {
-  if (pendingControl || playerFailure || !room?.isCreator || !room.current || !playerReady || claimedSong !== room.current.id || loadedSong !== room.current.id) return;
+  if (room?.endedAt || pendingControl || playerFailure || !room?.isCreator || !room.current || !playerReady || claimedSong !== room.current.id || loadedSong !== room.current.id) return;
   pendingControl = { command, songId: loadedSong, position: awaitingPlayback ? room.playback.position : player.getCurrentTime() };
   localPaused = command === 'pause';
   if (localPaused) player.pauseVideo();
@@ -262,7 +280,7 @@ function controlPlayback(command) {
   playbackChanged();
 }
 function renderLocalPlayback() {
-  const hasVideo = Boolean(room?.isCreator && room.current);
+  const hasVideo = Boolean(room?.isCreator && room.current && !room.endedAt);
   if ($('#player-stage')) $('#player-stage').hidden = !hasVideo;
   if ($('#transport-controls')) $('#transport-controls').hidden = !hasVideo;
   const ready = hasVideo && playerReady && claimedSong === room.current.id && loadedSong === room.current.id && !pendingControl && !playerFailure && !syncBusy;
@@ -274,19 +292,20 @@ function renderLocalPlayback() {
     ? playerReady && loadedSong === room.current.id && !localPaused && !localBlocked && player.getPlayerState() === YT.PlayerState.PLAYING
     : true));
   $('.room-turntable')?.classList.toggle('is-playing', spinning);
-  const failure = playerFailure?.songId === room?.current?.id ? playerFailure : room?.current && room.playback.errorCode != null ? youtubeError(room.playback.errorCode) : null;
+  const failure = room?.endedAt ? null : playerFailure?.songId === room?.current?.id ? playerFailure : room?.current && room.playback.errorCode != null ? youtubeError(room.playback.errorCode) : null;
   if ($('#retry-playback')) { $('#retry-playback').hidden = !(room?.isCreator && failure && !failure.skip); $('#retry-playback').disabled = syncBusy || reportBusy; }
   if (failure && $('#player-message')) $('#player-message').textContent = failure.message;
+  if (room?.endedAt && $('#player-message')) $('#player-message').textContent = '';
   const label = playbackLabel(room, serverNow());
-  if ($('#host-status')) $('#host-status').textContent = (room?.creatorConnection === 'connected' && label !== '방장 연결 확인 중' && label !== '방장 연결 끊김' ? '방장 연결됨 · ' : '') + label + (room?.playback.status === 'disconnected' ? ' · 마지막 확인 위치에서 기다려요.' : '');
+  if ($('#host-status')) $('#host-status').textContent = room?.endedAt ? '모임이 끝났어요 · 감상 요약을 확인해 주세요.' : (room?.creatorConnection === 'connected' && label !== '방장 연결 확인 중' && label !== '방장 연결 끊김' ? '방장 연결됨 · ' : '') + label + (room?.playback.status === 'disconnected' ? ' · 마지막 확인 위치에서 기다려요.' : '');
   if ($('#playback-status')) $('#playback-status').textContent = label;
   if ($('#session-position')) {
     const seconds = Math.floor(positionAt(room?.playback, serverNow()));
-    $('#session-position').textContent = room?.current ? `재생 위치 ${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, '0')}` : '';
+    $('#session-position').textContent = room?.current && !room.endedAt ? `재생 위치 ${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, '0')}` : '';
   }
 }
 async function reportDuration() {
-  if (!room?.isCreator || !room.current || !playerReady || loadedSong !== room.current.id || durationBusy || room.current.duration || durationSentFor === loadedSong) return;
+  if (room?.endedAt || !room?.isCreator || !room.current || !playerReady || loadedSong !== room.current.id || durationBusy || room.current.duration || durationSentFor === loadedSong) return;
   const duration = player.getDuration();
   if (!Number.isFinite(duration) || duration < 1 || duration > 43200 || !loadedVideoMatches()) return;
   const songId = loadedSong; durationBusy = true;
@@ -296,7 +315,7 @@ async function reportDuration() {
 }
 function playbackChanged() { lastPlaybackReport = 0; reportPlayback(); renderLocalPlayback(); }
 async function reportPlayback() {
-  if (!room?.isCreator || !room.current || claimedSong !== room.current.id || reportBusy || syncBusy || Date.now() - lastPlaybackReport < 3000) return;
+  if (room?.endedAt || !room?.isCreator || !room.current || claimedSong !== room.current.id || reportBusy || syncBusy || Date.now() - lastPlaybackReport < 3000) return;
   let failure = playerFailure?.songId === room.current.id ? playerFailure : null;
   if (!failure && (!playerReady || loadedSong !== room.current.id || !loadedVideoMatches())) return;
   const songId = room.current.id, revision = claimedRevision;
@@ -329,6 +348,7 @@ async function reportPlayback() {
   } finally { reportBusy = false; renderLocalPlayback(); }
 }
 async function syncPlayer() {
+  if (room?.endedAt) { if (player) stopPlayer(); renderLocalPlayback(); return; }
   if (syncBusy) return;
   if (!room?.isCreator) { stopPlayer(); renderLocalPlayback(); return; }
   if (!room.current) {
@@ -358,7 +378,7 @@ async function syncPlayer() {
     if (playerFailure?.songId === room.current.id) return;
     if (!player) {
       await loadYoutube();
-      if (!room?.isCreator || !room.current || claimedSong !== room.current.id) return;
+      if (room?.endedAt || !room?.isCreator || !room.current || claimedSong !== room.current.id) return;
       if (!$('#youtube-player')) { const mount = document.createElement('div'); mount.id = 'youtube-player'; $('#player-stage').append(mount); }
       player = new YT.Player('youtube-player', { width: '100%', height: '100%', playerVars: { playsinline: 1, controls: 0, disablekb: 1, fs: 0, origin: location.origin }, events: {
         onReady: event => { if (!player || (event?.target && event.target !== player)) return; clearTimeout(playerReadyTimer); playerReady = true; const iframe = player.getIframe(); iframe.title = '함께 듣는 YouTube 플레이어'; iframe.tabIndex = -1; iframe.setAttribute('allow', 'autoplay; encrypted-media; picture-in-picture'); syncPlayer(); },
@@ -382,7 +402,7 @@ async function syncPlayer() {
       clearTimeout(playerReadyTimer);
       playerReadyTimer = setTimeout(() => { if (player === instance && !playerReady) showPlayerError('api', songId); }, 15000);
     }
-    if (!playerReady || claimedSong !== room.current?.id) return;
+    if (room?.endedAt || !playerReady || claimedSong !== room.current?.id) return;
     player.getIframe().hidden = false;
     if (loadedSong !== room.current.id) {
       loadedSong = room.current.id; durationSentFor = null; awaitingPlayback = true;

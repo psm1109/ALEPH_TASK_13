@@ -344,3 +344,45 @@ dialog{max-height:calc(100dvh - 40px);overflow:auto;overscroll-behavior:contain}
 }
 @media(min-width:701px) and (max-width:979px){.room-grid{grid-template-areas:"player people" "player request" "queue queue"}.room-heading{flex-wrap:wrap}.room-heading h1{flex:1 1 50%}}
 @media(max-width:700px){.room-grid{grid-template-areas:"player" "request" "queue" "people"}.room-heading{flex-wrap:wrap}.room-heading h1{flex:1 1 100%;font-size:24px;margin:0}.room-tools{gap:10px}.room-heading .outline{padding:9px 12px}.room-grid .queue-panel{min-height:220px}.help-button{width:36px;height:36px}.room-grid .request-panel .search-form{flex-wrap:nowrap}.room-grid .request-panel .search-form input{flex:1 1 0;width:0;min-width:0}dialog{padding:24px}.queue-pagination .outline{min-height:40px;min-width:44px}}
+
+/* Listening notes stay in dialogs; the existing room grid keeps its space. */
+.footer-actions{display:flex;align-items:center;gap:18px;flex-wrap:wrap}
+.current-heading{display:flex;align-items:center;justify-content:center;gap:10px;min-width:0}
+.current-heading h2{min-width:0}
+.reflection-trigger{flex:0 0 auto;white-space:nowrap;padding:4px 0;font-size:11px}
+.reflection-fieldset{border:0;padding:0;margin:22px 0}
+.reflection-fieldset legend{font-size:13px;margin-bottom:10px;color:var(--text)}
+.reflection-choices{display:flex;flex-wrap:wrap;gap:8px}
+.reflection-choices label{display:flex;align-items:center;gap:6px;padding:9px 11px;border:1px solid var(--line);border-radius:9px;color:var(--text);font-size:12px}
+.reflection-choices label:has(input:checked){background:color-mix(in srgb,var(--accent) 12%,var(--panel));border-color:var(--accent)}
+.reflection-choices input{width:15px;height:15px;margin:0;accent-color:var(--accent)}
+.reflection-fieldset:disabled{opacity:.5}
+#reflection-dialog select,#listening-records select{display:block;width:100%;min-width:0;margin:8px 0 16px;padding:10px 12px;border:1px solid var(--line);border-radius:9px;background:var(--panel);color:var(--text);font:inherit;font-size:13px}
+.reflection-note{line-height:1.8}
+.form-error:not(:empty){color:var(--text);border-left:2px solid var(--accent);padding-left:10px;font-size:13px;margin:14px 0}
+#listening-records{max-width:620px}
+#report-content{margin-top:18px;font-size:13px;overflow-wrap:anywhere}
+.report-section{border-bottom:1px solid var(--line);padding:18px 0}
+.report-section h3{font-size:15px;margin-bottom:10px}
+.report-section p{line-height:1.9}
+.report-ratings{display:flex;flex-wrap:wrap;gap:12px;margin:16px 0;font-size:12px}
+.report-ratings b{color:var(--accent);margin-left:3px}
+.report-reasons{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin:14px 0}
+.report-reasons>div{display:flex;justify-content:space-between;gap:10px;padding:9px 12px;background:color-mix(in srgb,var(--accent) 7%,var(--panel));border-radius:8px;font-size:12px}
+.report-reasons dd{margin:0;color:var(--accent)}
+.report-track-list article{display:flex;align-items:center;justify-content:space-between;gap:12px;border-bottom:1px solid var(--line);padding:12px 0}
+.report-track-list article>div{min-width:0}
+.report-track-list b{font-size:12px;font-weight:500}
+.report-track-list .outline{font-size:12px;flex-shrink:0;padding:7px 12px}
+.report-section summary{color:var(--muted);font-size:12px;padding:5px 0}
+.report-song-list{list-style:none;padding:0;margin:8px 0 14px}
+.report-song-list li{display:flex;flex-direction:column;gap:4px;margin:12px 0}
+.report-song-list b{font-size:13px;font-weight:500}
+.report-song-list span{font-size:12px;color:var(--muted)}
+.report-subheading{margin-top:22px}
+.report-scope,.report-storage{line-height:1.9;margin-top:16px}
+#finish-controls{margin-top:18px}
+#finish-confirm{padding:14px 0 0;font-size:13px;line-height:1.8}
+.finish-actions{display:flex;justify-content:flex-end;gap:12px;margin-top:12px}
+#ended-summary{margin-top:12px;font-size:12px}
+@media(max-width:700px){footer{flex-wrap:wrap}.footer-actions{gap:14px}.reflection-trigger{min-height:36px}.reflection-choices label{min-height:44px}.report-track-list .outline{min-height:44px}#reflection-dialog select,#listening-records select{font-size:16px}.finish-actions{flex-wrap:wrap}}
