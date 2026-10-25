@@ -48,7 +48,8 @@ export function createListeningNotes({ getRoom, save, finish, notify }) {
   }
   function renderRecords() {
     const report = selectedReport(), room = getRoom();
-    const expanded = $('#report-content details')?.open;
+    const expanded = $('#report-content .report-edit-list')?.open;
+    const likedExpanded = $('#report-content .report-liked-more')?.open;
     renderedSignature = JSON.stringify([report?.listeningId, report?.reflections, report?.endedAt, room?.isCreator]);
     $('#finish-controls').hidden = !(activeReport(report) && room.isCreator && !room.endedAt);
     $('#report-storage-note').textContent = storageFailed
@@ -63,9 +64,23 @@ export function createListeningNotes({ getRoom, save, finish, notify }) {
     const description = !personal.total ? '아직 남긴 감상이 없어요. 직접 들은 곡에 감상을 남겨 주세요.'
       : `${personal.total}곡에 감상을 남겼고 ${personal.counts.like}곡을 좋아했어요.${top ? ` 좋았던 이유에서는 ${top} 선택이 가장 많았어요.` : ' 좋았던 이유는 아직 기록하지 않았어요.'}`;
     const mineBySong = new Map(mine.map(review => [review.song.id, review]));
+    const liked = mine.filter(review => review.rating === 'like');
+    const likedList = items => `<ul class="report-song-list report-personal-songs">${items.map(review => `<li><b>${esc(review.song.title)}</b><span>${esc(review.song.artist || 'YouTube')}</span></li>`).join('')}</ul>`;
+    const likedMarkup = liked.length ? likedList(liked.slice(0, 5)) + (liked.length > 5 ? `<details class="report-liked-more"><summary>좋아한 곡 ${liked.length - 5}곡 더 보기</summary>${likedList(liked.slice(5))}</details>` : '') : '<p class="small muted">좋았어요를 남긴 곡이 아직 없어요.</p>';
     const groupList = (items, type) => items.length ? `<ul class="report-song-list">${items.slice(0, 5).map(item => `<li><b>${esc(item.song.title)}</b><span>${type === 'shared' ? `응답 ${item.total}명 모두 좋았어요` : `좋았어요 ${item.like} · 보통 ${item.neutral} · 아쉬웠어요 ${item.dislike}`}</span></li>`).join('')}</ul>` : `<p class="small muted">${type === 'shared' ? '두 명 이상이 응답하고 모두 좋아한 곡이 아직 없어요.' : '좋았어요와 아쉬웠어요가 함께 나온 곡이 아직 없어요.'}</p>`;
-    $('#report-content').innerHTML = `<p class="report-session-state muted small">${esc(report.title)} · ${report.endedAt ? '모임 종료' : live ? '함께 듣는 중' : '저장 당시의 기록'}</p><section class="report-section"><h3>이번 모임에서 남긴 내 감상</h3><p>${esc(description)}</p>${personal.total ? `<div class="report-ratings"><span>좋았어요 <b>${personal.counts.like}</b></span><span>보통 <b>${personal.counts.neutral}</b></span><span>아쉬웠어요 <b>${personal.counts.dislike}</b></span></div><dl class="report-reasons">${Object.entries(REFLECTION_REASONS).map(([key, label]) => `<div><dt>${label}</dt><dd>${personal.reasons[key]}곡</dd></div>`).join('')}</dl><p class="small muted">이유는 좋았어요를 선택한 곡만 집계해요. 여러 이유를 고를 수 있어 합계가 곡 수와 다를 수 있어요.</p>` : ''}</section><section class="report-section"><h3>감상 남기기 · 수정하기</h3><details${personal.total ? '' : ' open'}><summary>현재·최근 재생곡과 내 기록 ${tracks.length}곡</summary><div class="report-track-list">${tracks.length ? tracks.map(song => `<article><div><b>${esc(song.title)}</b><p class="small muted">${mineBySong.has(song.id) ? esc(REFLECTION_RATINGS[mineBySong.get(song.id).rating]) : '아직 감상 없음'}</p></div>${editable ? `<button type="button" class="outline" data-reflect="${esc(song.id)}">${mineBySong.has(song.id) ? '수정' : '감상'}</button>` : ''}</article>`).join('') : '<p class="small muted">첫 곡을 함께 들은 뒤 기록할 수 있어요.</p>'}</div></details></section><section class="report-section"><h3>응답자 모두가 좋아한 곡</h3>${groupList(group.shared, 'shared')}<h3 class="report-subheading">서로 다르게 느낀 곡</h3>${groupList(group.different, 'different')}<p class="small muted">감상을 남긴 ${group.respondents}명의 응답만 집계해요. 곡마다 응답 인원은 다르며 미응답자의 취향은 추정하지 않아요.</p></section><p class="small muted report-scope">직접 남긴 이번 모임의 감상입니다. 성격이나 고정된 취향 유형을 판정하지 않아요.</p>`;
-    if (expanded !== undefined) $('#report-content details').open = expanded;
+    $('#report-content').innerHTML = `
+      <p class="report-session-state muted small">${esc(report.title)} · ${report.endedAt ? '모임 종료' : live ? '함께 듣는 중' : '저장 당시의 기록'}</p>
+      <div class="report-overview"><div><span>감상 남긴 곡</span><strong>${personal.total}<small>곡</small></strong></div><div><span>내가 좋아한 곡</span><strong>${personal.counts.like}<small>곡</small></strong></div></div>
+      <p class="small muted">${esc(description)}</p>
+      ${personal.total ? `<div class="report-ratings"><span>좋았어요 <b>${personal.counts.like}</b></span><span>보통 <b>${personal.counts.neutral}</b></span><span>아쉬웠어요 <b>${personal.counts.dislike}</b></span></div>` : ''}
+      <section class="report-section report-personal"><h3>내가 좋아한 곡</h3>${likedMarkup}</section>
+      <section class="report-section report-reason-section"><h3>좋았던 이유</h3>${personal.topReasons.length ? `<p class="small muted">가장 많이 남긴 이유 · ${esc(top)}</p>` : '<p class="small muted">좋았던 이유를 선택하면 이곳에 모여요.</p>'}<dl class="report-reasons">${Object.entries(REFLECTION_REASONS).map(([key, label]) => `<div><dt>${label}</dt><dd>${personal.reasons[key]}곡</dd></div>`).join('')}</dl><p class="small muted">좋았어요를 선택한 곡에서 직접 남긴 이유만 집계해요. 여러 이유를 고를 수 있어 합계가 곡 수와 다를 수 있어요.</p></section>
+      <section class="report-section report-shared"><h3>함께 좋아한 곡</h3><p class="small muted">두 명 이상이 응답하고, 응답자 모두가 좋아한 곡이에요.</p>${groupList(group.shared, 'shared')}</section>
+      <section class="report-section"><h3>서로 다르게 느낀 곡</h3>${groupList(group.different, 'different')}<p class="small muted">감상을 남긴 ${group.respondents}명의 응답만 집계해요. 곡마다 응답 인원은 다르며 미응답자의 취향은 추정하지 않아요.</p></section>
+      <section class="report-section"><h3>감상 남기기 · 수정하기</h3><details class="report-edit-list"${personal.total ? '' : ' open'}><summary>현재·최근 재생곡과 내 기록 ${tracks.length}곡</summary><div class="report-track-list">${tracks.length ? tracks.map(song => `<article><div><b>${esc(song.title)}</b><p class="small muted">${mineBySong.has(song.id) ? esc(REFLECTION_RATINGS[mineBySong.get(song.id).rating]) : '아직 감상 없음'}</p></div>${editable ? `<button type="button" class="outline" data-reflect="${esc(song.id)}">${mineBySong.has(song.id) ? '수정' : '감상'}</button>` : ''}</article>`).join('') : '<p class="small muted">첫 곡을 함께 들은 뒤 기록할 수 있어요.</p>'}</div></details></section>
+      <p class="small muted report-scope">직접 남긴 이번 모임의 감상입니다. 성격이나 고정된 취향 유형을 판정하지 않아요.</p>`;
+    if (expanded !== undefined) $('#report-content .report-edit-list').open = expanded;
+    if (likedExpanded !== undefined && $('#report-content .report-liked-more')) $('#report-content .report-liked-more').open = likedExpanded;
     $('#report-content').querySelectorAll('[data-reflect]').forEach(button => button.onclick = () => openReflection(button.dataset.reflect, true));
   }
   function updateReasonChoices() {
@@ -125,6 +140,13 @@ export function createListeningNotes({ getRoom, save, finish, notify }) {
     else if (!recordsDialog.open) $('#reflect-current')?.focus();
   });
   function update(room) {
+    const count = $('#records-count'), visible = Boolean(room?.reflections && (room.me || room.endedAt));
+    count.hidden = !visible;
+    const total = visible ? summarizeReflections(room.reflections.mine).total : 0;
+    const value = $('#records-count-value');
+    if (value.textContent !== `${total}곡`) value.textContent = `${total}곡`;
+    $('#records-open').setAttribute('aria-label', visible ? `감상 기록 열기 · 이번 모임의 내 감상 ${total}곡` : '감상 기록 열기');
+    if (!room) return;
     capture(room);
     const report = selectedReport();
     const nextSignature = JSON.stringify([report?.listeningId, report?.reflections, report?.endedAt, room.isCreator]);

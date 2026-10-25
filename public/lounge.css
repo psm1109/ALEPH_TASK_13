@@ -287,3 +287,36 @@ dialog h2{font-size:23px;font-weight:600;letter-spacing:-.7px}
   .entry-scroll-cue,.has-scroll-below .entry-scroll-cue{display:none}
   .has-scroll-above .entry-card-header{box-shadow:none}
 }
+
+/* Explain the shared speaker and surface each person's explicit listening notes. */
+.listening-context{display:flex;flex-direction:column;align-items:center;gap:3px;margin:16px auto 0;color:var(--text);font-size:12px;line-height:1.7;word-break:keep-all}
+.listening-context strong{font-size:14px;font-weight:600;color:var(--accent)}
+.landing-copy .listening-context+.app-purpose{margin-top:13px;font-size:13px}
+#records-open{display:inline-flex;align-items:center;gap:7px}
+.records-count{display:inline-flex;align-items:center;gap:3px;padding:2px 7px;border:1px solid color-mix(in srgb,var(--accent) 30%,var(--line));border-radius:999px;background:color-mix(in srgb,var(--accent) 10%,var(--panel));color:var(--accent);font-size:10px;line-height:1.6;white-space:nowrap;font-variant-numeric:tabular-nums}
+.reflection-trigger.is-recorded{color:var(--accent);border-color:color-mix(in srgb,var(--accent) 40%,var(--line));background:color-mix(in srgb,var(--accent) 8%,var(--panel))}
+.report-overview{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;margin:18px 0 14px}
+.report-overview>div{display:flex;flex-direction:column;gap:5px;padding:16px;border:1px solid var(--line);border-radius:10px;background:var(--soft)}
+.report-overview>div>span{font-size:12px;color:var(--muted)}
+.report-overview strong{font-size:28px;line-height:1.3;font-weight:650;letter-spacing:-1px;font-variant-numeric:tabular-nums}
+.report-overview>div:last-child strong{color:var(--accent)}
+.report-overview strong small{font-size:12px;font-weight:500;margin-left:4px;letter-spacing:0}
+#report-content .report-section{padding:22px 0}
+#report-content .report-section h3{font-size:16px;margin-bottom:12px}
+.report-personal-songs li{border-left:2px solid var(--accent);padding-left:11px}
+.report-personal-songs b,.report-song-list b{overflow-wrap:anywhere}
+.report-reason-section .report-reasons{margin-top:14px}
+.report-reasons dd{white-space:nowrap;font-variant-numeric:tabular-nums}
+.report-shared .report-song-list{padding:4px 14px;background:var(--soft);border-radius:9px}
+@media(max-width:700px){
+  .listening-context{align-items:flex-start;gap:4px;margin:18px 0 0;font-size:12px}
+  .listening-context strong{font-size:14px}
+  .landing-copy .listening-context+.app-purpose{margin-top:12px;font-size:14px}
+  #records-open{gap:4px}
+  .records-count{padding:1px 5px;font-size:10px}
+  .records-count-label{display:none}
+  .header-actions{gap:10px}
+  .report-overview{gap:8px}
+  .report-overview>div{padding:13px}
+  .report-overview strong{font-size:25px}
+}
