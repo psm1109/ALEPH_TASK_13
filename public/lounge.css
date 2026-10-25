@@ -251,3 +251,39 @@ dialog h2{font-size:23px;font-weight:600;letter-spacing:-.7px}
   dialog h2{font-size:21px}
 }
 @media(prefers-reduced-motion:reduce){.room-vinyl{animation:none}}
+
+/* Entry card: fixed introduction and tabs, independently scrolling form. */
+.landing .create-card{padding:0;isolation:isolate;overflow:hidden}
+.entry-card-header{flex:0 0 auto;position:relative;z-index:1;padding:26px 30px 0}
+.entry-card-header .card-top{min-height:24px;margin-bottom:14px}
+.entry-card-header h2{margin:0 0 8px}
+.entry-card-header>.muted{font-size:13px;line-height:1.8}
+.entry-tabs{display:flex;gap:22px;margin-top:22px;border-bottom:1px solid var(--line)}
+.entry-tabs button{flex:1;min-height:44px;padding:10px 0;background:transparent;color:var(--muted);border-radius:0;border-bottom:2px solid transparent;font-size:13px;font-weight:600}
+.entry-tabs button[aria-selected=true]{color:var(--accent);border-bottom-color:var(--accent)}
+.entry-tabs button:hover{color:var(--text)}
+.entry-card-scroll{min-height:0;padding:22px 30px 30px;scrollbar-width:thin;scrollbar-color:var(--muted) transparent;scroll-padding:22px;overscroll-behavior-y:contain}
+.entry-card-scroll #create-form{margin:0}
+.entry-card-scroll .code-form,[data-theme=light] .entry-card-scroll .code-form{display:flex;flex-direction:column;align-items:stretch;gap:18px;padding:0;border:0;background:transparent}
+.entry-card-scroll .code-form label{font-size:13px;flex:0 0 auto}
+.entry-card-scroll .code-form input{letter-spacing:3px}
+.entry-card-scroll .code-form button{width:100%;min-height:48px}
+.entry-join-note{font-size:12px;line-height:1.8;margin-bottom:20px}
+.entry-scroll-cue{display:none;position:absolute;left:0;right:0;bottom:0;z-index:2;pointer-events:none;text-align:center;height:46px;padding-top:23px;background:linear-gradient(transparent,var(--panel) 75%);color:var(--muted);font-size:10px;letter-spacing:.5px}
+.has-scroll-below .entry-scroll-cue{display:block}
+.has-scroll-above .entry-card-header{box-shadow:0 8px 14px #0002}
+@media(min-width:701px) and (min-height:600px){
+  .landing .create-card,.landing.is-scene-pinned .create-card{display:flex;flex-direction:column;height:min(520px,calc(100svh - 180px));max-height:none;overflow:hidden}
+  .entry-card-scroll{flex:1 1 auto;overflow-y:auto}
+}
+@media(max-width:700px),(max-height:599px){
+  .landing .create-card,.landing.is-scene-pinned .create-card{height:auto;max-height:none;overflow:visible}
+  .entry-card-header{padding:22px 22px 0}
+  .entry-card-header>.muted{font-size:13px}
+  .entry-tabs{gap:16px;margin-top:20px}
+  .entry-tabs button{min-height:46px}
+  .entry-card-scroll{overflow:visible;padding:22px;overscroll-behavior-y:auto}
+  .entry-card-scroll input{font-size:16px;min-height:48px}
+  .entry-scroll-cue,.has-scroll-below .entry-scroll-cue{display:none}
+  .has-scroll-above .entry-card-header{box-shadow:none}
+}

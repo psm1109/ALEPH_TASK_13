@@ -33,6 +33,55 @@ let syncBusy = false, reportBusy = false, playbackFailure = false;
 const serverNow = () => performance.now() + serverClockOffset;
 const listeningNotes = createListeningNotes({ getRoom: () => room, save: data => act('reflections', data), finish: () => act('finish', {}), notify });
 let disposeLandingGuide = () => {};
+let disposeEntryCard = () => {};
+function mountEntryCard() {
+  const card = $('.create-card');
+  const header = document.createElement('header');
+  header.className = 'entry-card-header';
+  header.append(card.querySelector('.card-top'), card.querySelector('h2'), card.querySelector(':scope > .muted'));
+  header.insertAdjacentHTML('beforeend', '<div class="entry-tabs" role="tablist" aria-label="입장 방식"><button type="button" role="tab" id="create-entry-tab" aria-controls="create-entry-panel" aria-selected="true">모임 만들기</button><button type="button" role="tab" id="join-entry-tab" aria-controls="join-entry-panel" aria-selected="false" tabindex="-1">코드로 참여</button></div>');
+  const scroll = document.createElement('div');
+  scroll.className = 'entry-card-scroll';
+  scroll.insertAdjacentHTML('beforeend', '<div id="create-entry-panel" role="tabpanel" aria-labelledby="create-entry-tab"></div><div id="join-entry-panel" role="tabpanel" aria-labelledby="join-entry-tab" hidden><p class="entry-join-note muted">초대받은 6자리 방 코드를 입력해 주세요.</p></div>');
+  scroll.querySelector('#create-entry-panel').append($('#create-form'));
+  scroll.querySelector('#join-entry-panel').append($('#code-form'));
+  card.querySelector('.join-divider')?.remove();
+  card.append(header, scroll);
+  card.insertAdjacentHTML('beforeend', '<span class="entry-scroll-cue" aria-hidden="true">아래로 ↓</span>');
+  const controller = new AbortController(), { signal } = controller;
+  function updateScroll() {
+    const remaining = scroll.scrollHeight - scroll.clientHeight - scroll.scrollTop;
+    card.classList.toggle('has-scroll-below', remaining > 3);
+    card.classList.toggle('has-scroll-above', scroll.scrollTop > 3);
+  }
+  const modes = ['create', 'join'];
+  function select(mode, focus = false) {
+    for (const name of modes) {
+      const selected = name === mode, tab = $(`#${name}-entry-tab`);
+      tab.setAttribute('aria-selected', String(selected));
+      tab.tabIndex = selected ? 0 : -1;
+      $(`#${name}-entry-panel`).hidden = !selected;
+    }
+    scroll.scrollTop = 0;
+    if (focus) $(`#${mode}-entry-tab`).focus();
+    updateScroll();
+  }
+  for (const mode of modes) {
+    const tab = $(`#${mode}-entry-tab`);
+    tab.addEventListener('click', () => select(mode), { signal });
+    tab.addEventListener('keydown', event => {
+      if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
+      event.preventDefault();
+      select(event.key === 'Home' ? 'create' : event.key === 'End' ? 'join' : mode === 'create' ? 'join' : 'create', true);
+    }, { signal });
+  }
+  scroll.addEventListener('scroll', updateScroll, { passive: true, signal });
+  const observer = new ResizeObserver(updateScroll);
+  observer.observe(scroll);
+  modes.forEach(mode => observer.observe($(`#${mode}-entry-panel`)));
+  updateScroll();
+  disposeEntryCard = () => { controller.abort(); observer.disconnect(); disposeEntryCard = () => {}; };
+}
 function mountLandingGuide() {
   const guide = document.createElement('div');
   guide.className = 'landing-guide';
@@ -123,6 +172,7 @@ async function enterRoom(code) {
 }
 function landing() {
   disposeLandingGuide();
+  disposeEntryCard();
   // Decorative background belongs to this view and is removed when shell() renders.
   $('#app').innerHTML = `<section class="landing"><div class="landing-copy"><div class="landing-identity"><span class="eyebrow"><span class="dot"></span> A LITTLE LESS ME, A LITTLE MORE US</span><h1>내가 고른 음악이<br>우리의 음악이 되는 <em>사이</em></h1></div><p class="app-purpose">모임에서 함께 들을 음악을 고를 때, 성격만으로 서로의 취향을 단정하지 않아요. 각자 듣고 싶은 곡을 신청하고, 투표로 다음 곡을 함께 정해요.</p><div class="feature-row"><span>↗ 유튜브 곡 신청</span><span>♡ 한 곡에 한 표</span><span>♪ 함께 듣는 플레이어</span></div></div><section class="create-card"><div class="card-top"><span class="eyebrow"><span class="dot"></span> 함께 고르는 플레이리스트</span></div><h2>우리, 함께 들을까요?</h2><p class="muted">친구를 초대하고, 다음 곡을 함께 골라요.</p><form id="create-form"><label>방 이름<input name="title" placeholder="예: 오후의 작업실" maxlength="60" required></label><label>내 닉네임<input name="name" placeholder="사용할 닉네임" maxlength="20" required autocomplete="nickname"></label><button class="primary wide" type="submit">모임 만들기 <span aria-hidden="true">↗</span></button></form></section></section><section class="steps"><article><span>01 / JOIN</span><h3>방 만들기 · 참여하기</h3><p>방 이름과 닉네임으로 시작하거나<br>친구의 6자리 방 코드를 입력해요.</p></article><article><span>02 / REQUEST</span><h3>듣고 싶은 곡 신청</h3><p>곡을 검색하거나 유튜브 링크로 신청해요.<br>첫 곡은 바로 시작하고 다음 곡부터 대기해요.</p></article><article><span>03 / VOTE</span><h3>다음 곡에 한 표</h3><p>대기곡에 듣고 싶어요(+1) · 이번엔 패스(−1).<br>점수가 높은 순서로, 동점이면 신청순으로 들어요.</p></article></section>`;
   $('#app').insertAdjacentHTML('afterbegin', '<div class="landing-backdrop" aria-hidden="true"><div class="ambient-turntable"><div class="ambient-vinyl"><span class="ambient-label"></span></div></div></div>');
@@ -137,10 +187,12 @@ function landing() {
   });
   $('.create-card').insertAdjacentHTML('beforeend', `<div class="join-divider">초대받으셨나요?</div><form id="code-form" class="code-form"><label>방 코드<input name="code" inputmode="numeric" pattern="[0-9]{6}" minlength="6" maxlength="6" placeholder="6자리 숫자" autocomplete="off" required></label><button class="outline">코드로 입장 ↗</button></form>`);
   $('#code-form').onsubmit = event => { event.preventDefault(); const code = new FormData(event.target).get('code').trim(); if (/^\d{6}$/.test(code)) enterRoom(code); };
+  mountEntryCard();
   mountLandingGuide();
 }
 function shell() {
   disposeLandingGuide();
+  disposeEntryCard();
   $('#app').innerHTML = `<section class="room-heading"><h1 id="room-title">모임에 연결 중…</h1><button id="invite" class="outline">초대 ↗</button></section><div id="connection" class="connection" role="status"></div><div class="room-grid"><section class="left-column"><div id="player-stage" hidden><div id="youtube-player"></div></div><article class="panel request-panel"><div class="panel-heading"><h2>곡 신청</h2><button class="help-button" type="button" data-room-help aria-label="곡 신청 안내">?</button></div><div id="request-content"></div></article><section class="panel people-panel"><div class="panel-heading"><h2>함께 듣는 사람</h2><button id="people-count" class="quiet" type="button" aria-haspopup="dialog" aria-label="전체 참여자 보기"></button></div><div id="people"></div></section></section><article class="panel player-panel"><div class="panel-heading"><span class="now-label">지금 함께 듣는 곡</span><span class="badge" id="player-role"></span><p id="host-status" class="small muted" role="status"></p></div><div class="room-turntable"><div class="room-vinyl" aria-hidden="true"><div class="room-vinyl-label"><span>SAI</span><small>LISTEN TOGETHER</small></div></div><img class="tonearm" src="/tonearm.svg" alt="" draggable="false"></div><div id="current-info"></div><div class="playback-actions"><div id="transport-controls" class="transport-controls" hidden><button id="play-song" class="primary" type="button">▶ 재생</button><button id="pause-song" class="outline" type="button">Ⅱ 일시정지</button></div><div id="reflection-control"></div></div><p id="player-message" class="small muted" role="status"></p><button id="retry-playback" class="outline" type="button" hidden>↻ 재시도</button><div id="play-controls"></div></article><aside class="right-column"><div class="queue-column"><section class="panel queue-panel"><div class="panel-heading"><h2>다음 곡 <span id="queue-count" class="count">0</span></h2><button class="help-button" type="button" data-room-help aria-label="대기열과 투표 안내">?</button></div><div id="queue"></div><nav id="queue-pagination" class="queue-pagination" aria-label="대기곡 페이지" hidden><button id="queue-prev" class="outline" type="button" aria-label="이전 대기곡">←</button><span id="queue-page" aria-live="polite"></span><button id="queue-next" class="outline" type="button" aria-label="다음 대기곡">→</button></nav></section></div></aside></div>`;
   $('#app').insertAdjacentHTML('afterbegin', '<div class="room-backdrop" aria-hidden="true"></div>');
   renderQueue.page = 0;
